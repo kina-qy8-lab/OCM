@@ -28,33 +28,19 @@
         };
     </script>
 
-    <!-- Custom Styles for Animations -->
+    <!-- Custom Styles -->
     <style>
         @import url('https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;700&display=swap');
         
-        body {
-            font-family: 'M PLUS Rounded 1c', sans-serif;
-            background-color: #f0fdf4; /* Green-50 */
-        }
-        
+        body { font-family: 'M PLUS Rounded 1c', sans-serif; background-color: #f0fdf4; }
         .fade-in { animation: fadeIn 0.5s ease-in; }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-
-        .slide-up { animation: slideUp 0.5s ease-out; }
-        @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-
         .stamp-animation { animation: stamp 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
-        @keyframes stamp { 
-            0% { transform: scale(3); opacity: 0; } 
-            100% { transform: scale(1); opacity: 1; } 
-        }
-
+        @keyframes stamp { 0% { transform: scale(3); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
         .correct-flash { animation: flashGreen 0.5s; }
         @keyframes flashGreen { 0%, 100% { background-color: white; } 50% { background-color: #bbf7d0; } }
-
         .wrong-flash { animation: flashRed 0.5s; }
         @keyframes flashRed { 0%, 100% { background-color: white; } 50% { background-color: #fecaca; } }
-
         /* Custom Scrollbar */
         ::-webkit-scrollbar { width: 8px; }
         ::-webkit-scrollbar-track { background: #f1f1f1; }
@@ -68,8 +54,7 @@
     <script type="text/babel">
         const { useState, useEffect, useRef, useMemo } = React;
 
-        // --- Configuration & Data ---
-        
+        // --- Configuration ---
         const firebaseConfig = {
             apiKey: "AIzaSyCPziY4qZiRI0LbWXrSCnsOhJUxNwvdxxE",
             authDomain: "organic-chem-master-74df8.firebaseapp.com",
@@ -79,6 +64,7 @@
             appId: "1:729011758610:web:50fbddf730d36a90969acb"
         };
 
+        // --- Data (Updated List) ---
         const COMPOUNDS_RAW = [
             { id: 1, name: "メタン", url: "https://drive.google.com/uc?id=1qwuf3wdb9DWG1n6wwx_D3qTRjn3Ozt1S" },
             { id: 2, name: "エタン", url: "https://drive.google.com/uc?id=1CrOzeJ4pHTSDreMKtZeWKLdP6POBxS7d" },
@@ -193,15 +179,16 @@
             { id: 111, name: "ベンゼン", url: "https://drive.google.com/uc?id=1JpKeyNXgIv0RXc2VntrWJCeoem-DatqZ" }
         ];
 
-        // --- Helper: Convert Drive URL to Thumbnail URL for better stability ---
+        // --- Helper to convert Google Drive URL to a safe direct link ---
+        // This format (lh3.googleusercontent.com/d/...) is generally more reliable for IMG tags
+        // especially on mobile devices where 3rd party cookies are often blocked.
         const getDriveImageUrl = (url) => {
             if (!url) return 'https://placehold.co/400?text=No+Image';
             // Extract ID from https://drive.google.com/uc?id=...
             const match = url.match(/id=([a-zA-Z0-9_-]+)/);
             if (match && match[1]) {
-                // Use thumbnail generation endpoint (more robust against CORS and cookies)
-                // sz=w1000 requests a width of 1000px
-                return `https://drive.google.com/thumbnail?id=${match[1]}&sz=w1000`;
+                // Use lh3.googleusercontent.com/d/ format which is more robust for direct embedding
+                return `https://lh3.googleusercontent.com/d/${match[1]}`;
             }
             return url;
         };
@@ -229,9 +216,7 @@
             { threshold: 100, name: "有機化学マスター", color: "bg-yellow-500" }
         ];
 
-        const getRank = (stamps) => {
-            return RANKS.slice().reverse().find(r => stamps >= r.threshold) || RANKS[0];
-        };
+        const getRank = (stamps) => RANKS.slice().reverse().find(r => stamps >= r.threshold) || RANKS[0];
 
         const shuffleArray = (array) => {
             let currentIndex = array.length, randomIndex;
@@ -251,420 +236,40 @@
             </div>
         );
 
-        // --- Main App Component ---
-
-        const App = () => {
-            const [user, setUser] = useState(null);
-            const [userData, setUserData] = useState(null);
-            const [loading, setLoading] = useState(true);
-            const [view, setView] = useState("dashboard"); // dashboard, drill, test, teacher
-            const [activeSession, setActiveSession] = useState(null);
-
-            // Auth Listener
-            useEffect(() => {
-                const unsubscribe = window.firebaseModules.onAuthStateChanged(auth, async (currentUser) => {
-                    setUser(currentUser);
-                    if (currentUser) {
-                        const userRef = window.firebaseModules.doc(db, "users", currentUser.uid);
-                        const userSnap = await window.firebaseModules.getDoc(userRef);
-                        
-                        if (userSnap.exists()) {
-                            setUserData(userSnap.data());
-                        } else {
-                            // Check for pre-registration (Batch registered by teacher)
-                            if (currentUser.email) {
-                                const preRegRef = window.firebaseModules.doc(db, "pre_registrations", currentUser.email);
-                                const preRegSnap = await window.firebaseModules.getDoc(preRegRef);
-                                
-                                if (preRegSnap.exists()) {
-                                    // Auto-register using pre-registered data
-                                    const preData = preRegSnap.data();
-                                    const newData = {
-                                        uid: currentUser.uid,
-                                        email: currentUser.email,
-                                        name: preData.name,
-                                        classId: preData.classId,
-                                        studentNumber: preData.studentNumber || "", // Add field from preData
-                                        role: 'student',
-                                        stamps: 0,
-                                        drillStats: { attempts: 0, passes: 0 },
-                                        createdAt: window.firebaseModules.serverTimestamp()
-                                    };
-                                    await window.firebaseModules.setDoc(userRef, newData);
-                                    setUserData(newData);
-                                } else {
-                                    // New user, wait for registration modal
-                                    setUserData(null);
-                                }
-                            } else {
-                                setUserData(null);
-                            }
-                        }
-                    } else {
-                        setUserData(null);
-                    }
-                    setLoading(false);
-                });
-                return () => unsubscribe();
-            }, []);
-
-            // Test Session Listener
-            useEffect(() => {
-                if (!userData || userData.role !== 'student') return;
-                
-                const q = window.firebaseModules.query(
-                    window.firebaseModules.collection(db, "test_sessions"),
-                    window.firebaseModules.where("status", "in", ["active", "standby"]),
-                    window.firebaseModules.where("targetClasses", "array-contains", userData.classId)
-                );
-
-                const unsubscribe = window.firebaseModules.onSnapshot(q, (snapshot) => {
-                    if (!snapshot.empty) {
-                        const session = snapshot.docs[0].data();
-                        session.id = snapshot.docs[0].id;
-                        setActiveSession(session);
-                    } else {
-                        setActiveSession(null);
-                    }
-                });
-                return () => unsubscribe();
-            }, [userData]);
-
-            const handleLogout = () => {
-                window.firebaseModules.signOut(auth);
-                setView("dashboard");
-            };
-
-            const handleRegister = async (name, classId, studentNumber, isTeacher) => {
-                const role = isTeacher ? 'teacher' : 'student';
-                const data = {
-                    uid: user.uid,
-                    email: user.email,
-                    name,
-                    classId,
-                    studentNumber: studentNumber || "", // Add field
-                    role,
-                    stamps: 0,
-                    drillStats: { attempts: 0, passes: 0 },
-                    createdAt: window.firebaseModules.serverTimestamp()
-                };
-                await window.firebaseModules.setDoc(window.firebaseModules.doc(db, "users", user.uid), data);
-                setUserData(data);
-            };
-
-            if (loading) return <Loading />;
-
-            if (!user) {
-                return <LoginScreen />;
-            }
-
-            if (!userData) {
-                return <RegistrationScreen onRegister={handleRegister} />;
-            }
-
-            if (view === "drill") return <DrillGame user={userData} onBack={() => setView("dashboard")} />;
-            if (view === "test") return <TestRunner user={userData} session={activeSession} onBack={() => setView("dashboard")} />;
-            if (view === "teacher" && userData.role === 'teacher') return <TeacherDashboard user={userData} onBack={() => setView("dashboard")} />;
-
-            return (
-                <div className="min-h-screen bg-green-50 p-4">
-                    <header className="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm mb-6 max-w-4xl mx-auto">
-                        <div>
-                            <h1 className="text-xl font-bold text-gray-800">Organic Chem Master</h1>
-                            <p className="text-sm text-gray-500">
-                                {userData.classId} {userData.studentNumber ? `No.${userData.studentNumber}` : ''} {userData.name} ({getRank(userData.stamps).name})
-                            </p>
-                        </div>
-                        <div className="flex gap-2">
-                             {userData.role === 'teacher' && (
-                                <button onClick={() => setView("teacher")} className="bg-purple-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-purple-700 transition">
-                                    教員メニュー
-                                </button>
-                            )}
-                            <button onClick={handleLogout} className="text-gray-500 hover:text-red-500 px-3 py-2">
-                                ログアウト
-                            </button>
-                        </div>
-                    </header>
-
-                    <main className="max-w-4xl mx-auto grid md:grid-cols-2 gap-6">
-                        <div className="bg-white p-6 rounded-2xl shadow-lg">
-                            <h2 className="text-lg font-bold text-gray-700 mb-4 flex items-center">
-                                <span className="mr-2">🏆</span> スタンプカード
-                            </h2>
-                            <div className="flex flex-wrap gap-2 mb-4 h-48 overflow-y-auto content-start p-2 bg-gray-50 rounded-lg">
-                                {[...Array(Math.max(20, userData.stamps + (5 - userData.stamps % 5)))].map((_, i) => (
-                                    <div key={i} className={`w-10 h-10 rounded-full flex items-center justify-center border-2 
-                                        ${i < userData.stamps ? 'border-yellow-400 bg-yellow-100 text-yellow-600' : 'border-gray-200 text-gray-300'}`}>
-                                        {i < userData.stamps ? '★' : i + 1}
-                                    </div>
-                                ))}
-                            </div>
-                            <div className="flex items-center justify-between">
-                                <div className={`px-3 py-1 rounded-full text-white text-sm font-bold ${getRank(userData.stamps).color}`}>
-                                    Rank: {getRank(userData.stamps).name}
-                                </div>
-                                <div className="text-sm text-gray-500">
-                                    合計スタンプ: {userData.stamps}個
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="space-y-4">
-                            <button 
-                                onClick={() => setView("drill")}
-                                className="w-full bg-gradient-to-r from-green-400 to-green-600 hover:from-green-500 hover:to-green-700 text-white p-6 rounded-2xl shadow-lg transform transition hover:scale-105 flex flex-col items-center justify-center"
-                            >
-                                <span className="text-3xl mb-2">🧪</span>
-                                <span className="text-2xl font-bold">演習モード</span>
-                                <span className="text-sm opacity-90">ランダム10問に挑戦！スタンプGET</span>
-                            </button>
-
-                            <button 
-                                onClick={() => activeSession && setView("test")}
-                                disabled={!activeSession}
-                                className={`w-full p-6 rounded-2xl shadow-lg transform transition flex flex-col items-center justify-center
-                                    ${activeSession 
-                                        ? 'bg-gradient-to-r from-red-400 to-red-600 text-white hover:scale-105 cursor-pointer animate-pulse' 
-                                        : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
-                            >
-                                <span className="text-3xl mb-2">📝</span>
-                                <span className="text-2xl font-bold">テストモード</span>
-                                <span className="text-sm opacity-90">
-                                    {activeSession ? "テストが実施されています！" : "現在実施されているテストはありません"}
-                                </span>
-                            </button>
-                            
-                            <div className="bg-white p-4 rounded-xl shadow-sm">
-                                <h3 className="text-sm font-bold text-gray-500 mb-2">学習状況</h3>
-                                <div className="flex justify-between text-sm">
-                                    <span>演習回数: {userData.drillStats?.attempts || 0}回</span>
-                                    <span>合格率: {userData.drillStats?.attempts ? Math.round((userData.drillStats.passes / userData.drillStats.attempts) * 100) : 0}%</span>
-                                </div>
-                            </div>
-                        </div>
-                    </main>
-                </div>
-            );
-        };
-
-        // --- Sub Components ---
-
-        const LoginScreen = () => {
-            const handleGoogleLogin = async () => {
-                const provider = new window.firebaseModules.GoogleAuthProvider();
-                try {
-                    await window.firebaseModules.signInWithPopup(auth, provider);
-                } catch (error) {
-                    console.error("Login failed", error);
-                    let msg = "ログインに失敗しました。";
-                    if (error.code === 'auth/configuration-not-found') {
-                        msg += "\n【エラー原因】Firebaseコンソールで「Googleログイン」が有効になっていません。\nAuthentication > Sign-in method でGoogleを有効にしてください。";
-                    } else if (error.code === 'auth/unauthorized-domain') {
-                        msg += `\n【重要：設定が必要です】\nこのサイトのドメイン(${window.location.hostname})が許可されていません。\n\nFirebaseコンソール > Authentication > Settings > 承認済みドメイン\nに「${window.location.hostname}」を追加してください。`;
-                    } else if (error.code === 'auth/popup-blocked') {
-                        msg += "\n【エラー原因】ポップアップがブロックされました。\nブラウザのアドレスバーにあるポップアップ設定から許可してください。";
-                    }
-                    alert(msg);
-                }
-            };
-            
-            const handleGuestLogin = async () => {
-                 try {
-                    await window.firebaseModules.signInAnonymously(auth);
-                } catch (error) {
-                    alert("ゲストログインに失敗しました。");
-                }
-            };
-
-            return (
-                <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-b from-green-50 to-green-100 p-4">
-                    <div className="bg-white p-8 rounded-3xl shadow-xl max-w-md w-full text-center">
-                        <div className="text-6xl mb-4">⚗️</div>
-                        <h1 className="text-3xl font-bold text-gray-800 mb-2">Organic Chem Master</h1>
-                        <p className="text-gray-500 mb-8">有機化合物の構造式をマスターしよう</p>
-                        <div className="space-y-3">
-                            <button 
-                                onClick={handleGoogleLogin}
-                                className="w-full bg-white border border-gray-300 text-gray-700 font-bold py-3 px-4 rounded-xl shadow-sm hover:bg-gray-50 flex items-center justify-center transition"
-                            >
-                                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-6 h-6 mr-2" />
-                                Googleでログイン
-                            </button>
-                            
-                            <div className="relative flex py-2 items-center">
-                                <div className="flex-grow border-t border-gray-300"></div>
-                                <span className="flex-shrink-0 mx-4 text-gray-400 text-sm">または</span>
-                                <div className="flex-grow border-t border-gray-300"></div>
-                            </div>
-                            
-                            <button 
-                                onClick={handleGuestLogin}
-                                className="w-full bg-gray-600 text-white font-bold py-3 px-4 rounded-xl shadow-sm hover:bg-gray-700 flex items-center justify-center transition"
-                            >
-                                ゲスト(匿名)として開始
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            );
-        };
-
-        const RegistrationScreen = ({ onRegister }) => {
-            const [name, setName] = useState("");
-            const [classId, setClassId] = useState("3-A");
-            const [studentNumber, setStudentNumber] = useState("");
-            const [isTeacher, setIsTeacher] = useState(false);
-            const [password, setPassword] = useState("");
-
-            const handleSubmit = (e) => {
-                e.preventDefault();
-                if (!name) return alert("名前を入力してください");
-                if (isTeacher && password !== "admin123") return alert("教員用パスワードが違います");
-                onRegister(name, classId, studentNumber, isTeacher);
-            };
-
-            return (
-                <div className="min-h-screen flex flex-col items-center justify-center bg-green-50 p-4">
-                    <div className="bg-white p-8 rounded-3xl shadow-xl max-w-md w-full">
-                        <h2 className="text-2xl font-bold text-center mb-6">ユーザー登録</h2>
-                        <form onSubmit={handleSubmit} className="space-y-4">
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block text-sm font-bold text-gray-700 mb-1">クラス</label>
-                                    <select 
-                                        value={classId} 
-                                        onChange={(e) => setClassId(e.target.value)}
-                                        className="w-full p-2 border rounded-lg"
-                                    >
-                                        {["3-A", "3-B", "3-C", "3-D", "3-E", "教員"].map(c => <option key={c} value={c}>{c}</option>)}
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-bold text-gray-700 mb-1">出席番号</label>
-                                    <input 
-                                        type="text" 
-                                        value={studentNumber} 
-                                        onChange={(e) => setStudentNumber(e.target.value)}
-                                        className="w-full p-2 border rounded-lg"
-                                        placeholder="例: 1"
-                                    />
-                                </div>
-                            </div>
-                            <div>
-                                <label className="block text-sm font-bold text-gray-700 mb-1">氏名</label>
-                                <input 
-                                    type="text" 
-                                    value={name} 
-                                    onChange={(e) => setName(e.target.value)}
-                                    className="w-full p-2 border rounded-lg"
-                                    placeholder="山田 太郎"
-                                />
-                            </div>
-                            
-                            <div className="pt-4 border-t">
-                                <label className="flex items-center space-x-2 text-sm text-gray-600">
-                                    <input type="checkbox" checked={isTeacher} onChange={(e) => setIsTeacher(e.target.checked)} />
-                                    <span>教員として登録する</span>
-                                </label>
-                            </div>
-                            
-                            {isTeacher && (
-                                <div>
-                                    <label className="block text-sm font-bold text-gray-700 mb-1">管理者パスワード</label>
-                                    <input 
-                                        type="password" 
-                                        value={password} 
-                                        onChange={(e) => setPassword(e.target.value)}
-                                        className="w-full p-2 border rounded-lg"
-                                        placeholder="パスワードを入力"
-                                    />
-                                </div>
-                            )}
-
-                            <button type="submit" className="w-full bg-green-500 text-white font-bold py-3 rounded-xl hover:bg-green-600 transition">
-                                登録して開始
-                            </button>
-                        </form>
-                    </div>
-                </div>
-            );
-        };
-
-        const Quiz = ({ mode, questions, timeLimit, onFinish }) => {
-            const [currentIdx, setCurrentIdx] = useState(0);
-            const [score, setScore] = useState(0);
-            const [timeLeft, setTimeLeft] = useState(timeLimit);
-            const [selected, setSelected] = useState(null);
-            const [showResult, setShowResult] = useState(false);
-            const [answers, setAnswers] = useState([]);
-            const [startTime] = useState(Date.now());
-
-            const timerRef = useRef(null);
-
-            useEffect(() => {
-                if (showResult) return;
-                timerRef.current = setInterval(() => {
-                    setTimeLeft((prev) => {
-                        if (prev <= 1) {
-                            clearInterval(timerRef.current);
-                            finishQuiz(score, answers);
-                            return 0;
-                        }
-                        return prev - 1;
-                    });
-                }, 1000);
-                return () => clearInterval(timerRef.current);
-            }, [showResult, score, answers]);
-
-            const finishQuiz = (finalScore, finalAnswers) => {
-                setShowResult(true);
-                const timeTaken = timeLimit - (timeLeft > 0 ? timeLeft : 0);
-                onFinish({ score: finalScore, timeTaken: (Date.now() - startTime) / 1000, answers: finalAnswers });
-            };
+        // --- Question Card Component (Separated for Force Re-render) ---
+        const QuestionCard = ({ question, currentIdx, total, timeLeft, onAnswer }) => {
+            const [selectedId, setSelectedId] = useState(null);
 
             const handleAnswer = (choice) => {
-                if (selected) return;
-
-                const isCorrect = choice.id === questions[currentIdx].correct.id;
-                setSelected(isCorrect ? 'correct' : 'wrong');
+                if (selectedId) return; // Prevent double click
+                setSelectedId(choice.id);
                 
-                const newScore = isCorrect ? score + 1 : score;
-                const newAnswers = [...answers, isCorrect];
-                setScore(newScore);
-                setAnswers(newAnswers);
-
-                setTimeout(() => {
-                    if (currentIdx + 1 < questions.length) {
-                        setCurrentIdx(currentIdx + 1);
-                        setSelected(null);
-                    } else {
-                        finishQuiz(newScore, newAnswers);
-                    }
-                }, 600);
+                const isCorrect = choice.id === question.correct.id;
+                onAnswer(isCorrect, choice);
             };
 
-            const q = questions[currentIdx];
-            if (showResult) return <div className="text-center p-10 font-bold text-2xl">集計中...</div>;
+            const selectedChoice = question.choices.find(c => c.id === selectedId);
+            const isCorrectSelected = selectedChoice && selectedChoice.id === question.correct.id;
 
             return (
-                <div className={`max-w-2xl mx-auto bg-white rounded-3xl shadow-xl overflow-hidden ${selected === 'correct' ? 'correct-flash' : selected === 'wrong' ? 'wrong-flash' : ''}`}>
+                <div className={`max-w-2xl mx-auto bg-white rounded-3xl shadow-xl overflow-hidden ${selectedId ? (isCorrectSelected ? 'correct-flash' : 'wrong-flash') : ''}`}>
+                    {/* Header */}
                     <div className="bg-gray-100 p-4 flex justify-between items-center">
-                        <div className="font-bold text-gray-600">Q.{currentIdx + 1} / {questions.length}</div>
+                        <div className="font-bold text-gray-600">Q.{currentIdx + 1} / {total}</div>
                         <div className={`font-mono text-xl font-bold ${timeLeft < 10 ? 'text-red-500 animate-pulse' : 'text-gray-700'}`}>
                             ⏱ {timeLeft}s
                         </div>
                     </div>
 
                     <div className="p-6 text-center">
-                        {q.type === 'name-to-struct' ? (
+                        {question.type === 'name-to-struct' ? (
                             <div className="mb-6">
                                 <h2 className="text-sm text-gray-500 mb-2">この構造式の名称は？</h2>
                                 <div className="flex justify-center">
                                     <div className="bg-white border-2 border-gray-200 rounded-xl p-4 w-64 h-48 flex items-center justify-center overflow-hidden">
                                          <img 
-                                            key={q.correct.url}
-                                            src={q.correct.url} 
+                                            key={question.correct.url}
+                                            src={question.correct.url} 
                                             alt="structure" 
                                             className="max-w-full max-h-full object-contain" 
                                             referrerPolicy="no-referrer"
@@ -676,23 +281,25 @@
                         ) : (
                             <div className="mb-6">
                                 <h2 className="text-sm text-gray-500 mb-2">次の化合物の構造式は？</h2>
-                                <h1 className="text-3xl font-bold text-gray-800 my-8">{q.correct.name}</h1>
+                                <h1 className="text-3xl font-bold text-gray-800 my-8">{question.correct.name}</h1>
                             </div>
                         )}
 
+                        {/* Choices */}
                         <div className="grid grid-cols-2 gap-4">
-                            {q.choices.map((choice, i) => (
+                            {question.choices.map((choice) => (
                                 <button
                                     key={choice.id}
                                     onClick={() => handleAnswer(choice)}
-                                    disabled={selected !== null}
+                                    disabled={selectedId !== null}
                                     className={`p-4 rounded-xl border-2 transition transform hover:scale-105 active:scale-95 flex items-center justify-center min-h-[80px]
-                                        ${selected === null ? 'border-gray-200 hover:border-blue-400 hover:bg-blue-50' : ''}
-                                        ${selected !== null && choice.id === q.correct.id ? 'bg-green-100 border-green-500 ring-2 ring-green-300' : ''}
-                                        ${selected === 'wrong' && choice.id !== q.correct.id ? 'opacity-50' : ''}
+                                        ${selectedId === null ? 'border-gray-200 hover:border-blue-400 hover:bg-blue-50' : ''}
+                                        ${selectedId !== null && choice.id === question.correct.id ? 'bg-green-100 border-green-500 ring-2 ring-green-300' : ''}
+                                        ${selectedId === choice.id && choice.id !== question.correct.id ? 'bg-red-100 border-red-500 opacity-80' : ''}
+                                        ${selectedId !== null && selectedId !== choice.id && choice.id !== question.correct.id ? 'opacity-40' : ''}
                                     `}
                                 >
-                                    {q.type === 'name-to-struct' ? (
+                                    {question.type === 'name-to-struct' ? (
                                         <span className="font-bold text-lg">{choice.name}</span>
                                     ) : (
                                         <div className="w-full h-24 flex items-center justify-center overflow-hidden">
@@ -713,6 +320,64 @@
                 </div>
             );
         };
+
+        // --- Active Quiz Container ---
+        const ActiveQuiz = ({ questions, timeLimit, onFinish }) => {
+            const [currentIdx, setCurrentIdx] = useState(0);
+            const [score, setScore] = useState(0);
+            const [timeLeft, setTimeLeft] = useState(timeLimit);
+            const [answers, setAnswers] = useState([]);
+            const [startTime] = useState(Date.now());
+            const timerRef = useRef(null);
+
+            useEffect(() => {
+                timerRef.current = setInterval(() => {
+                    setTimeLeft((prev) => {
+                        if (prev <= 1) {
+                            clearInterval(timerRef.current);
+                            handleFinishQuiz(score, answers, 0); // Time over
+                            return 0;
+                        }
+                        return prev - 1;
+                    });
+                }, 1000);
+                return () => clearInterval(timerRef.current);
+            }, [score, answers]);
+
+            const handleFinishQuiz = (finalScore, finalAnswers, finalTimeLeft) => {
+                const timeTaken = timeLimit - (finalTimeLeft > 0 ? finalTimeLeft : 0);
+                onFinish({ score: finalScore, timeTaken: (Date.now() - startTime) / 1000, answers: finalAnswers });
+            };
+
+            const handleAnswer = (isCorrect, choice) => {
+                const newScore = isCorrect ? score + 1 : score;
+                const newAnswers = [...answers, isCorrect];
+                setScore(newScore);
+                setAnswers(newAnswers);
+
+                setTimeout(() => {
+                    if (currentIdx + 1 < questions.length) {
+                        setCurrentIdx(prev => prev + 1);
+                    } else {
+                        clearInterval(timerRef.current);
+                        handleFinishQuiz(newScore, newAnswers, timeLeft);
+                    }
+                }, 600);
+            };
+
+            return (
+                <QuestionCard 
+                    key={currentIdx}
+                    question={questions[currentIdx]}
+                    currentIdx={currentIdx}
+                    total={questions.length}
+                    timeLeft={timeLeft}
+                    onAnswer={handleAnswer}
+                />
+            );
+        };
+
+        // --- Game Screens ---
 
         const generateQuestions = (count) => {
             const questions = [];
@@ -773,7 +438,7 @@
                             </div>
                         </div>
                     )}
-                    {state === 'playing' && <Quiz mode="drill" questions={questions} timeLimit={60} onFinish={handleFinish} />}
+                    {state === 'playing' && <ActiveQuiz questions={questions} timeLimit={60} onFinish={handleFinish} />}
                     {state === 'result' && (
                         <div className="max-w-md mx-auto mt-20 text-center fade-in">
                             <div className="bg-white p-8 rounded-3xl shadow-xl">
@@ -852,7 +517,7 @@
                             <button onClick={onBack} className="mt-8 text-gray-400 underline">退出</button>
                         </div>
                     )}
-                    {status === 'active' && <Quiz mode="test" questions={questions} timeLimit={60} onFinish={handleFinish} />}
+                    {status === 'active' && <ActiveQuiz questions={questions} timeLimit={60} onFinish={handleFinish} />}
                     {status === 'finished' && (
                         <div className="max-w-md mx-auto mt-20 text-center bg-white p-8 rounded-3xl shadow-xl">
                             <h2 className="text-2xl font-bold mb-4">テスト終了！</h2>
