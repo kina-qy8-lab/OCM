@@ -734,6 +734,202 @@
             );
         };
 
+        // --- Main App Component ---
+        const App = () => {
+            const [user, setUser] = useState(null);
+            const [userData, setUserData] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const [view, setView] = useState("dashboard"); // dashboard, drill, test, teacher
+            const [activeSession, setActiveSession] = useState(null);
+
+            // Auth Listener
+            useEffect(() => {
+                const unsubscribe = window.firebaseModules.onAuthStateChanged(auth, async (currentUser) => {
+                    setUser(currentUser);
+                    if (currentUser) {
+                        const userRef = window.firebaseModules.doc(db, "users", currentUser.uid);
+                        const userSnap = await window.firebaseModules.getDoc(userRef);
+                        
+                        if (userSnap.exists()) {
+                            setUserData(userSnap.data());
+                        } else {
+                            // Check for pre-registration (Batch registered by teacher)
+                            if (currentUser.email) {
+                                const preRegRef = window.firebaseModules.doc(db, "pre_registrations", currentUser.email);
+                                const preRegSnap = await window.firebaseModules.getDoc(preRegRef);
+                                
+                                if (preRegSnap.exists()) {
+                                    // Auto-register using pre-registered data
+                                    const preData = preRegSnap.data();
+                                    const newData = {
+                                        uid: currentUser.uid,
+                                        email: currentUser.email,
+                                        name: preData.name,
+                                        classId: preData.classId,
+                                        studentNumber: preData.studentNumber || "",
+                                        role: 'student',
+                                        stamps: 0,
+                                        drillStats: { attempts: 0, passes: 0 },
+                                        createdAt: window.firebaseModules.serverTimestamp()
+                                    };
+                                    await window.firebaseModules.setDoc(userRef, newData);
+                                    setUserData(newData);
+                                } else {
+                                    // New user, wait for registration modal
+                                    setUserData(null);
+                                }
+                            } else {
+                                setUserData(null);
+                            }
+                        }
+                    } else {
+                        setUserData(null);
+                    }
+                    setLoading(false);
+                });
+                return () => unsubscribe();
+            }, []);
+
+            // Test Session Listener
+            useEffect(() => {
+                if (!userData || userData.role !== 'student') return;
+                
+                const q = window.firebaseModules.query(
+                    window.firebaseModules.collection(db, "test_sessions"),
+                    window.firebaseModules.where("status", "in", ["active", "standby"]),
+                    window.firebaseModules.where("targetClasses", "array-contains", userData.classId)
+                );
+
+                const unsubscribe = window.firebaseModules.onSnapshot(q, (snapshot) => {
+                    if (!snapshot.empty) {
+                        const session = snapshot.docs[0].data();
+                        session.id = snapshot.docs[0].id;
+                        setActiveSession(session);
+                    } else {
+                        setActiveSession(null);
+                    }
+                });
+                return () => unsubscribe();
+            }, [userData]);
+
+            const handleLogout = () => {
+                window.firebaseModules.signOut(auth);
+                setView("dashboard");
+            };
+
+            const handleRegister = async (name, classId, studentNumber, isTeacher) => {
+                const role = isTeacher ? 'teacher' : 'student';
+                const data = {
+                    uid: user.uid,
+                    email: user.email,
+                    name,
+                    classId,
+                    studentNumber: studentNumber || "", // Add field
+                    role,
+                    stamps: 0,
+                    drillStats: { attempts: 0, passes: 0 },
+                    createdAt: window.firebaseModules.serverTimestamp()
+                };
+                await window.firebaseModules.setDoc(window.firebaseModules.doc(db, "users", user.uid), data);
+                setUserData(data);
+            };
+
+            if (loading) return <Loading />;
+
+            if (!user) {
+                return <LoginScreen />;
+            }
+
+            if (!userData) {
+                return <RegistrationScreen onRegister={handleRegister} />;
+            }
+
+            if (view === "drill") return <DrillGame user={userData} onBack={() => setView("dashboard")} />;
+            if (view === "test") return <TestRunner user={userData} session={activeSession} onBack={() => setView("dashboard")} />;
+            if (view === "teacher" && userData.role === 'teacher') return <TeacherDashboard user={userData} onBack={() => setView("dashboard")} />;
+
+            return (
+                <div className="min-h-screen bg-green-50 p-4">
+                    <header className="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm mb-6 max-w-4xl mx-auto">
+                        <div>
+                            <h1 className="text-xl font-bold text-gray-800">Organic Chem Master</h1>
+                            <p className="text-sm text-gray-500">
+                                {userData.classId} {userData.studentNumber ? `No.${userData.studentNumber}` : ''} {userData.name} ({getRank(userData.stamps).name})
+                            </p>
+                        </div>
+                        <div className="flex gap-2">
+                             {userData.role === 'teacher' && (
+                                <button onClick={() => setView("teacher")} className="bg-purple-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-purple-700 transition">
+                                    教員メニュー
+                                </button>
+                            )}
+                            <button onClick={handleLogout} className="text-gray-500 hover:text-red-500 px-3 py-2">
+                                ログアウト
+                            </button>
+                        </div>
+                    </header>
+
+                    <main className="max-w-4xl mx-auto grid md:grid-cols-2 gap-6">
+                        <div className="bg-white p-6 rounded-2xl shadow-lg">
+                            <h2 className="text-lg font-bold text-gray-700 mb-4 flex items-center">
+                                <span className="mr-2">🏆</span> スタンプカード
+                            </h2>
+                            <div className="flex flex-wrap gap-2 mb-4 h-48 overflow-y-auto content-start p-2 bg-gray-50 rounded-lg">
+                                {[...Array(Math.max(20, userData.stamps + (5 - userData.stamps % 5)))].map((_, i) => (
+                                    <div key={i} className={`w-10 h-10 rounded-full flex items-center justify-center border-2 
+                                        ${i < userData.stamps ? 'border-yellow-400 bg-yellow-100 text-yellow-600' : 'border-gray-200 text-gray-300'}`}>
+                                        {i < userData.stamps ? '★' : i + 1}
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="flex items-center justify-between">
+                                <div className={`px-3 py-1 rounded-full text-white text-sm font-bold ${getRank(userData.stamps).color}`}>
+                                    Rank: {getRank(userData.stamps).name}
+                                </div>
+                                <div className="text-sm text-gray-500">
+                                    合計スタンプ: {userData.stamps}個
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="space-y-4">
+                            <button 
+                                onClick={() => setView("drill")}
+                                className="w-full bg-gradient-to-r from-green-400 to-green-600 hover:from-green-500 hover:to-green-700 text-white p-6 rounded-2xl shadow-lg transform transition hover:scale-105 flex flex-col items-center justify-center"
+                            >
+                                <span className="text-3xl mb-2">🧪</span>
+                                <span className="text-2xl font-bold">演習モード</span>
+                                <span className="text-sm opacity-90">ランダム10問に挑戦！スタンプGET</span>
+                            </button>
+
+                            <button 
+                                onClick={() => activeSession && setView("test")}
+                                disabled={!activeSession}
+                                className={`w-full p-6 rounded-2xl shadow-lg transform transition flex flex-col items-center justify-center
+                                    ${activeSession 
+                                        ? 'bg-gradient-to-r from-red-400 to-red-600 text-white hover:scale-105 cursor-pointer animate-pulse' 
+                                        : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
+                            >
+                                <span className="text-3xl mb-2">📝</span>
+                                <span className="text-2xl font-bold">テストモード</span>
+                                <span className="text-sm opacity-90">
+                                    {activeSession ? "テストが実施されています！" : "現在実施されているテストはありません"}
+                                </span>
+                            </button>
+                            
+                            <div className="bg-white p-4 rounded-xl shadow-sm">
+                                <h3 className="text-sm font-bold text-gray-500 mb-2">学習状況</h3>
+                                <div className="flex justify-between text-sm">
+                                    <span>演習回数: {userData.drillStats?.attempts || 0}回</span>
+                                    <span>合格率: {userData.drillStats?.attempts ? Math.round((userData.drillStats.passes / userData.drillStats.attempts) * 100) : 0}%</span>
+                                </div>
+                            </div>
+                        </div>
+                    </main>
+                </div>
+            );
+        };
+
         // --- Render ---
         const root = ReactDOM.createRoot(document.getElementById("root"));
         root.render(<App />);
