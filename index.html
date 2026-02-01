@@ -18,12 +18,12 @@
     <!-- Firebase SDKs (Modular) -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getAuth, signInWithPopup, GoogleAuthProvider, signInAnonymously, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+        import { getAuth, signInWithPopup, GoogleAuthProvider, signInWithEmailAndPassword, createUserWithEmailAndPassword, signInAnonymously, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
         import { getFirestore, collection, doc, setDoc, getDoc, getDocs, updateDoc, onSnapshot, addDoc, query, where, orderBy, serverTimestamp, writeBatch, deleteDoc, increment } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
         // Expose Firebase to window for React component to use
         window.firebaseModules = { 
-            initializeApp, getAuth, signInWithPopup, GoogleAuthProvider, signInAnonymously, onAuthStateChanged, signOut,
+            initializeApp, getAuth, signInWithPopup, GoogleAuthProvider, signInWithEmailAndPassword, createUserWithEmailAndPassword, signInAnonymously, onAuthStateChanged, signOut,
             getFirestore, collection, doc, setDoc, getDoc, getDocs, updateDoc, onSnapshot, addDoc, query, where, orderBy, serverTimestamp, writeBatch, deleteDoc, increment
         };
     </script>
@@ -79,7 +79,7 @@
             appId: "1:729011758610:web:50fbddf730d36a90969acb"
         };
 
-        const COMPOUNDS = [
+        const COMPOUNDS_RAW = [
             { id: 1, name: "メタン", url: "https://drive.google.com/uc?id=1qwuf3wdb9DWG1n6wwx_D3qTRjn3Ozt1S" },
             { id: 2, name: "エタン", url: "https://drive.google.com/uc?id=1CrOzeJ4pHTSDreMKtZeWKLdP6POBxS7d" },
             { id: 3, name: "プロパン", url: "https://drive.google.com/uc?id=1g3wFagtQJdkVIqgtU4Zzmhpy-F-0xGEH" },
@@ -193,6 +193,25 @@
             { id: 111, name: "ベンゼン", url: "https://drive.google.com/uc?id=1z7IXQ5IFp5TkVQgSIr6o5r5_S_W-Ozp9" }
         ];
 
+        // --- Helper: Convert Drive URL to Thumbnail URL for better stability ---
+        const getDriveImageUrl = (url) => {
+            if (!url) return 'https://placehold.co/400?text=No+Image';
+            // Extract ID from https://drive.google.com/uc?id=...
+            const match = url.match(/id=([a-zA-Z0-9_-]+)/);
+            if (match && match[1]) {
+                // Use thumbnail generation endpoint (more robust against CORS and cookies)
+                // sz=w1000 requests a width of 1000px
+                return `https://drive.google.com/thumbnail?id=${match[1]}&sz=w1000`;
+            }
+            return url;
+        };
+
+        // Convert RAW data to usable data with fixed URLs
+        const COMPOUNDS = COMPOUNDS_RAW.map(c => ({
+            ...c,
+            url: getDriveImageUrl(c.url)
+        }));
+
         // --- Firebase Initialization ---
         const app = window.firebaseModules.initializeApp(firebaseConfig);
         const auth = window.firebaseModules.getAuth(app);
@@ -232,17 +251,6 @@
             </div>
         );
 
-        const Modal = ({ isOpen, onClose, children }) => {
-            if (!isOpen) return null;
-            return (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50 p-4">
-                    <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 slide-up">
-                        {children}
-                    </div>
-                </div>
-            );
-        };
-
         // --- Main App Component ---
 
         const App = () => {
@@ -259,11 +267,38 @@
                     if (currentUser) {
                         const userRef = window.firebaseModules.doc(db, "users", currentUser.uid);
                         const userSnap = await window.firebaseModules.getDoc(userRef);
+                        
                         if (userSnap.exists()) {
                             setUserData(userSnap.data());
                         } else {
-                            // New user, wait for registration modal
-                            setUserData(null);
+                            // Check for pre-registration (Batch registered by teacher)
+                            if (currentUser.email) {
+                                const preRegRef = window.firebaseModules.doc(db, "pre_registrations", currentUser.email);
+                                const preRegSnap = await window.firebaseModules.getDoc(preRegRef);
+                                
+                                if (preRegSnap.exists()) {
+                                    // Auto-register using pre-registered data
+                                    const preData = preRegSnap.data();
+                                    const newData = {
+                                        uid: currentUser.uid,
+                                        email: currentUser.email,
+                                        name: preData.name,
+                                        classId: preData.classId,
+                                        studentNumber: preData.studentNumber || "", // Add field from preData
+                                        role: 'student',
+                                        stamps: 0,
+                                        drillStats: { attempts: 0, passes: 0 },
+                                        createdAt: window.firebaseModules.serverTimestamp()
+                                    };
+                                    await window.firebaseModules.setDoc(userRef, newData);
+                                    setUserData(newData);
+                                } else {
+                                    // New user, wait for registration modal
+                                    setUserData(null);
+                                }
+                            } else {
+                                setUserData(null);
+                            }
                         }
                     } else {
                         setUserData(null);
@@ -273,7 +308,7 @@
                 return () => unsubscribe();
             }, []);
 
-            // Test Session Listener (Active Tests)
+            // Test Session Listener
             useEffect(() => {
                 if (!userData || userData.role !== 'student') return;
                 
@@ -300,13 +335,14 @@
                 setView("dashboard");
             };
 
-            const handleRegister = async (name, classId, isTeacher) => {
+            const handleRegister = async (name, classId, studentNumber, isTeacher) => {
                 const role = isTeacher ? 'teacher' : 'student';
                 const data = {
                     uid: user.uid,
-                    email: user.email || 'guest@example.com',
+                    email: user.email,
                     name,
                     classId,
+                    studentNumber: studentNumber || "", // Add field
                     role,
                     stamps: 0,
                     drillStats: { attempts: 0, passes: 0 },
@@ -326,18 +362,18 @@
                 return <RegistrationScreen onRegister={handleRegister} />;
             }
 
-            // Router
             if (view === "drill") return <DrillGame user={userData} onBack={() => setView("dashboard")} />;
             if (view === "test") return <TestRunner user={userData} session={activeSession} onBack={() => setView("dashboard")} />;
             if (view === "teacher" && userData.role === 'teacher') return <TeacherDashboard user={userData} onBack={() => setView("dashboard")} />;
 
-            // Dashboard
             return (
                 <div className="min-h-screen bg-green-50 p-4">
                     <header className="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm mb-6 max-w-4xl mx-auto">
                         <div>
                             <h1 className="text-xl font-bold text-gray-800">Organic Chem Master</h1>
-                            <p className="text-sm text-gray-500">{userData.classId} {userData.name} ({getRank(userData.stamps).name})</p>
+                            <p className="text-sm text-gray-500">
+                                {userData.classId} {userData.studentNumber ? `No.${userData.studentNumber}` : ''} {userData.name} ({getRank(userData.stamps).name})
+                            </p>
                         </div>
                         <div className="flex gap-2">
                              {userData.role === 'teacher' && (
@@ -352,7 +388,6 @@
                     </header>
 
                     <main className="max-w-4xl mx-auto grid md:grid-cols-2 gap-6">
-                        {/* Stamp Card */}
                         <div className="bg-white p-6 rounded-2xl shadow-lg">
                             <h2 className="text-lg font-bold text-gray-700 mb-4 flex items-center">
                                 <span className="mr-2">🏆</span> スタンプカード
@@ -375,9 +410,7 @@
                             </div>
                         </div>
 
-                        {/* Actions */}
                         <div className="space-y-4">
-                            {/* Drill Button */}
                             <button 
                                 onClick={() => setView("drill")}
                                 className="w-full bg-gradient-to-r from-green-400 to-green-600 hover:from-green-500 hover:to-green-700 text-white p-6 rounded-2xl shadow-lg transform transition hover:scale-105 flex flex-col items-center justify-center"
@@ -387,7 +420,6 @@
                                 <span className="text-sm opacity-90">ランダム10問に挑戦！スタンプGET</span>
                             </button>
 
-                            {/* Test Button */}
                             <button 
                                 onClick={() => activeSession && setView("test")}
                                 disabled={!activeSession}
@@ -403,7 +435,6 @@
                                 </span>
                             </button>
                             
-                            {/* Stats */}
                             <div className="bg-white p-4 rounded-xl shadow-sm">
                                 <h3 className="text-sm font-bold text-gray-500 mb-2">学習状況</h3>
                                 <div className="flex justify-between text-sm">
@@ -433,8 +464,6 @@
                         msg += `\n【重要：設定が必要です】\nこのサイトのドメイン(${window.location.hostname})が許可されていません。\n\nFirebaseコンソール > Authentication > Settings > 承認済みドメイン\nに「${window.location.hostname}」を追加してください。`;
                     } else if (error.code === 'auth/popup-blocked') {
                         msg += "\n【エラー原因】ポップアップがブロックされました。\nブラウザのアドレスバーにあるポップアップ設定から許可してください。";
-                    } else if (error.code === 'auth/popup-closed-by-user') {
-                        msg = "ログインがキャンセルされました。";
                     }
                     alert(msg);
                 }
@@ -444,8 +473,7 @@
                  try {
                     await window.firebaseModules.signInAnonymously(auth);
                 } catch (error) {
-                    console.error("Guest Login failed", error);
-                    alert("ゲストログインに失敗しました。\nFirebaseコンソールで「匿名(Anonymous)」ログインが有効になっているか確認してください。");
+                    alert("ゲストログインに失敗しました。");
                 }
             };
 
@@ -476,7 +504,6 @@
                             >
                                 ゲスト(匿名)として開始
                             </button>
-                            <p className="text-xs text-gray-400 mt-2">※Googleログイン設定がうまくいかない場合はゲストをお使いください</p>
                         </div>
                     </div>
                 </div>
@@ -486,6 +513,7 @@
         const RegistrationScreen = ({ onRegister }) => {
             const [name, setName] = useState("");
             const [classId, setClassId] = useState("3-A");
+            const [studentNumber, setStudentNumber] = useState("");
             const [isTeacher, setIsTeacher] = useState(false);
             const [password, setPassword] = useState("");
 
@@ -493,7 +521,7 @@
                 e.preventDefault();
                 if (!name) return alert("名前を入力してください");
                 if (isTeacher && password !== "admin123") return alert("教員用パスワードが違います");
-                onRegister(name, classId, isTeacher);
+                onRegister(name, classId, studentNumber, isTeacher);
             };
 
             return (
@@ -501,15 +529,27 @@
                     <div className="bg-white p-8 rounded-3xl shadow-xl max-w-md w-full">
                         <h2 className="text-2xl font-bold text-center mb-6">ユーザー登録</h2>
                         <form onSubmit={handleSubmit} className="space-y-4">
-                            <div>
-                                <label className="block text-sm font-bold text-gray-700 mb-1">クラス</label>
-                                <select 
-                                    value={classId} 
-                                    onChange={(e) => setClassId(e.target.value)}
-                                    className="w-full p-2 border rounded-lg"
-                                >
-                                    {["3-A", "3-B", "3-C", "3-D", "3-E", "教員"].map(c => <option key={c} value={c}>{c}</option>)}
-                                </select>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-bold text-gray-700 mb-1">クラス</label>
+                                    <select 
+                                        value={classId} 
+                                        onChange={(e) => setClassId(e.target.value)}
+                                        className="w-full p-2 border rounded-lg"
+                                    >
+                                        {["3-A", "3-B", "3-C", "3-D", "3-E", "教員"].map(c => <option key={c} value={c}>{c}</option>)}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-bold text-gray-700 mb-1">出席番号</label>
+                                    <input 
+                                        type="text" 
+                                        value={studentNumber} 
+                                        onChange={(e) => setStudentNumber(e.target.value)}
+                                        className="w-full p-2 border rounded-lg"
+                                        placeholder="例: 1"
+                                    />
+                                </div>
                             </div>
                             <div>
                                 <label className="block text-sm font-bold text-gray-700 mb-1">氏名</label>
@@ -551,15 +591,13 @@
             );
         };
 
-        // --- Game Logic (Drill & Test) ---
-
         const Quiz = ({ mode, questions, timeLimit, onFinish }) => {
             const [currentIdx, setCurrentIdx] = useState(0);
             const [score, setScore] = useState(0);
             const [timeLeft, setTimeLeft] = useState(timeLimit);
-            const [selected, setSelected] = useState(null); // null, correct, wrong
+            const [selected, setSelected] = useState(null);
             const [showResult, setShowResult] = useState(false);
-            const [answers, setAnswers] = useState([]); // Array of boolean
+            const [answers, setAnswers] = useState([]);
             const [startTime] = useState(Date.now());
 
             const timerRef = useRef(null);
@@ -570,7 +608,7 @@
                     setTimeLeft((prev) => {
                         if (prev <= 1) {
                             clearInterval(timerRef.current);
-                            finishQuiz(score, answers); // Time up logic
+                            finishQuiz(score, answers);
                             return 0;
                         }
                         return prev - 1;
@@ -581,12 +619,12 @@
 
             const finishQuiz = (finalScore, finalAnswers) => {
                 setShowResult(true);
-                const timeTaken = timeLimit - (timeLeft > 0 ? timeLeft : 0); // Approx
+                const timeTaken = timeLimit - (timeLeft > 0 ? timeLeft : 0);
                 onFinish({ score: finalScore, timeTaken: (Date.now() - startTime) / 1000, answers: finalAnswers });
             };
 
             const handleAnswer = (choice) => {
-                if (selected) return; // Prevent double click
+                if (selected) return;
 
                 const isCorrect = choice.id === questions[currentIdx].correct.id;
                 setSelected(isCorrect ? 'correct' : 'wrong');
@@ -596,7 +634,6 @@
                 setScore(newScore);
                 setAnswers(newAnswers);
 
-                // Wait a bit then next question
                 setTimeout(() => {
                     if (currentIdx + 1 < questions.length) {
                         setCurrentIdx(currentIdx + 1);
@@ -604,7 +641,7 @@
                     } else {
                         finishQuiz(newScore, newAnswers);
                     }
-                }, 600); // 0.6s delay
+                }, 600);
             };
 
             const q = questions[currentIdx];
@@ -612,7 +649,6 @@
 
             return (
                 <div className={`max-w-2xl mx-auto bg-white rounded-3xl shadow-xl overflow-hidden ${selected === 'correct' ? 'correct-flash' : selected === 'wrong' ? 'wrong-flash' : ''}`}>
-                    {/* Header */}
                     <div className="bg-gray-100 p-4 flex justify-between items-center">
                         <div className="font-bold text-gray-600">Q.{currentIdx + 1} / {questions.length}</div>
                         <div className={`font-mono text-xl font-bold ${timeLeft < 10 ? 'text-red-500 animate-pulse' : 'text-gray-700'}`}>
@@ -620,14 +656,19 @@
                         </div>
                     </div>
 
-                    {/* Question Area */}
                     <div className="p-6 text-center">
                         {q.type === 'name-to-struct' ? (
                             <div className="mb-6">
                                 <h2 className="text-sm text-gray-500 mb-2">この構造式の名称は？</h2>
                                 <div className="flex justify-center">
-                                    <div className="bg-white border-2 border-gray-200 rounded-xl p-4 w-64 h-48 flex items-center justify-center">
-                                         <img src={q.correct.url} alt="structure" className="max-w-full max-h-full object-contain" onError={(e)=>{e.target.src='https://placehold.co/200?text=No+Image'}} />
+                                    <div className="bg-white border-2 border-gray-200 rounded-xl p-4 w-64 h-48 flex items-center justify-center overflow-hidden">
+                                         <img 
+                                            src={q.correct.url} 
+                                            alt="structure" 
+                                            className="max-w-full max-h-full object-contain" 
+                                            referrerPolicy="no-referrer"
+                                            onError={(e)=>{e.target.src='https://placehold.co/200?text=No+Image'}} 
+                                        />
                                     </div>
                                 </div>
                             </div>
@@ -638,7 +679,6 @@
                             </div>
                         )}
 
-                        {/* Choices */}
                         <div className="grid grid-cols-2 gap-4">
                             {q.choices.map((choice, i) => (
                                 <button
@@ -654,7 +694,15 @@
                                     {q.type === 'name-to-struct' ? (
                                         <span className="font-bold text-lg">{choice.name}</span>
                                     ) : (
-                                        <img src={choice.url} alt="choice" className="h-24 w-full object-contain" onError={(e)=>{e.target.src='https://placehold.co/100?text=?'}} />
+                                        <div className="w-full h-24 flex items-center justify-center overflow-hidden">
+                                            <img 
+                                                src={choice.url} 
+                                                alt="choice" 
+                                                className="max-w-full max-h-full object-contain" 
+                                                referrerPolicy="no-referrer"
+                                                onError={(e)=>{e.target.src='https://placehold.co/100?text=?'}} 
+                                            />
+                                        </div>
                                     )}
                                 </button>
                             ))}
@@ -667,31 +715,10 @@
         const generateQuestions = (count) => {
             const questions = [];
             const all = shuffleArray([...COMPOUNDS]);
-            
             for (let i = 0; i < count; i++) {
                 const correct = all[i];
-                // Distractors: pick 3 others randomly
                 const others = shuffleArray(COMPOUNDS.filter(c => c.id !== correct.id)).slice(0, 3);
                 const choices = shuffleArray([correct, ...others]);
-                
-                // Randomly decide type: 0 = Name->Struct (Show Image, Pick Name), 1 = Struct->Name (Show Name, Pick Image)
-                // *Actually, the prompt says:*
-                // Pattern A: Show Name -> Select 4 Structure Images
-                // Pattern B: Show Structure Image -> Select 4 Names
-                // Let's implement that.
-                
-                // type 'name-to-struct': Show Image (correct.url), choices are Names (choice.name)
-                // type 'struct-to-name': Show Name (correct.name), choices are Images (choice.url)
-                // Wait, typically "Name to Struct" means Question is Name.
-                // Let's align with common sense:
-                // Type A: Question is Name. Choices are Images.
-                // Type B: Question is Image. Choices are Names.
-                
-                const type = Math.random() > 0.5 ? 'name-to-struct' : 'struct-to-name'; 
-                // Correction:
-                // name-to-struct: Q: Image, A: Name (Identify structure)
-                // struct-to-name: Q: Name, A: Image (Find structure)
-                
                 questions.push({
                     correct,
                     choices,
@@ -702,7 +729,7 @@
         };
 
         const DrillGame = ({ user, onBack }) => {
-            const [state, setState] = useState('ready'); // ready, playing, result
+            const [state, setState] = useState('ready');
             const [questions, setQuestions] = useState([]);
             const [result, setResult] = useState(null);
 
@@ -715,16 +742,12 @@
                 const passed = res.score >= 8;
                 setResult({ ...res, passed });
                 setState('result');
-
-                // Update Stats
                 const userRef = window.firebaseModules.doc(db, "users", user.uid);
                 const updates = {
                     "drillStats.attempts": window.firebaseModules.increment(1),
                     "drillStats.passes": passed ? window.firebaseModules.increment(1) : window.firebaseModules.increment(0)
                 };
-                if (passed) {
-                    updates.stamps = window.firebaseModules.increment(1);
-                }
+                if (passed) updates.stamps = window.firebaseModules.increment(1);
                 await window.firebaseModules.updateDoc(userRef, updates);
             };
 
@@ -745,11 +768,7 @@
                             </div>
                         </div>
                     )}
-                    
-                    {state === 'playing' && (
-                        <Quiz mode="drill" questions={questions} timeLimit={60} onFinish={handleFinish} />
-                    )}
-
+                    {state === 'playing' && <Quiz mode="drill" questions={questions} timeLimit={60} onFinish={handleFinish} />}
                     {state === 'result' && (
                         <div className="max-w-md mx-auto mt-20 text-center fade-in">
                             <div className="bg-white p-8 rounded-3xl shadow-xl">
@@ -757,19 +776,14 @@
                                     <div className="mb-6">
                                         <div className="text-6xl mb-4 stamp-animation">💮</div>
                                         <h2 className="text-2xl font-bold text-green-600">合格！</h2>
-                                        <p className="text-gray-500">スタンプGET!</p>
                                     </div>
                                 ) : (
                                     <div className="mb-6">
                                         <div className="text-6xl mb-4">💪</div>
                                         <h2 className="text-2xl font-bold text-gray-700">残念...</h2>
-                                        <p className="text-gray-500">あと{8 - result.score}問で合格でした</p>
                                     </div>
                                 )}
-                                
                                 <div className="text-4xl font-bold mb-2">{result.score} <span className="text-lg text-gray-400">/ 10点</span></div>
-                                <div className="text-sm text-gray-400 mb-8">タイム: {result.timeTaken.toFixed(1)}秒</div>
-
                                 <button onClick={onBack} className="w-full bg-gray-800 text-white font-bold py-3 rounded-xl hover:bg-gray-900 transition">
                                     メニューに戻る
                                 </button>
@@ -781,16 +795,13 @@
         };
 
         const TestRunner = ({ user, session, onBack }) => {
-            const [status, setStatus] = useState('standby'); // standby, active, finished
+            const [status, setStatus] = useState('standby');
             const [questions, setQuestions] = useState([]);
             const [rank, setRank] = useState(null);
             
-            // Sync status with session
             useEffect(() => {
                 if (!session) return;
-                
                 if (session.status === 'active' && status === 'standby') {
-                    // Reconstruct questions from IDs
                     const sessionQs = session.questionSet.map(qData => {
                         const correct = COMPOUNDS.find(c => c.id === qData.correctId);
                         const choices = qData.choiceIds.map(id => COMPOUNDS.find(c => c.id === id));
@@ -805,30 +816,24 @@
 
             const handleFinish = async (res) => {
                 setStatus('finished');
-                // Submit Result
                 await window.firebaseModules.setDoc(window.firebaseModules.doc(db, "test_results", `${session.id}_${user.uid}`), {
                     sessionId: session.id,
                     uid: user.uid,
                     name: user.name,
                     classId: user.classId,
+                    studentNumber: user.studentNumber || "",
                     score: res.score,
                     timeTaken: res.timeTaken,
                     timestamp: window.firebaseModules.serverTimestamp()
                 });
-
-                // Listen for Ranking
                 const q = window.firebaseModules.query(
                     window.firebaseModules.collection(db, "test_results"), 
                     window.firebaseModules.where("sessionId", "==", session.id)
                 );
-                
-                // Realtime ranking updates
                 const unsubscribe = window.firebaseModules.onSnapshot(q, (snap) => {
                     const results = snap.docs.map(d => d.data());
-                    // Sort: Score DESC, Time ASC
                     results.sort((a, b) => b.score - a.score || a.timeTaken - b.timeTaken);
-                    const myRank = results.findIndex(r => r.uid === user.uid) + 1;
-                    setRank(myRank);
+                    setRank(results.findIndex(r => r.uid === user.uid) + 1);
                 });
             };
 
@@ -839,33 +844,15 @@
                             <div className="animate-pulse text-6xl mb-4">📡</div>
                             <h2 className="text-2xl font-bold text-indigo-900 mb-2">先生の合図を待っています...</h2>
                             <p className="text-indigo-600">{session.name}</p>
-                            <p className="text-sm text-indigo-400 mt-8">画面を閉じずにお待ちください</p>
                             <button onClick={onBack} className="mt-8 text-gray-400 underline">退出</button>
                         </div>
                     )}
-
-                    {status === 'active' && (
-                        <Quiz mode="test" questions={questions} timeLimit={60} onFinish={handleFinish} />
-                    )}
-
+                    {status === 'active' && <Quiz mode="test" questions={questions} timeLimit={60} onFinish={handleFinish} />}
                     {status === 'finished' && (
                         <div className="max-w-md mx-auto mt-20 text-center bg-white p-8 rounded-3xl shadow-xl">
                             <h2 className="text-2xl font-bold mb-4">テスト終了！</h2>
-                            <p className="text-gray-500 mb-8">お疲れ様でした。結果を集計中です。</p>
-                            
-                            {rank ? (
-                                <div className="fade-in">
-                                    <div className="text-sm text-gray-400">現在の順位</div>
-                                    <div className="text-5xl font-bold text-indigo-600 mb-2">{rank}位</div>
-                                    <div className="text-xs text-gray-400">クラス内ランキング</div>
-                                </div>
-                            ) : (
-                                <div className="animate-pulse text-gray-400">集計中...</div>
-                            )}
-
-                            <button onClick={onBack} className="mt-8 w-full bg-gray-200 text-gray-700 py-3 rounded-xl hover:bg-gray-300">
-                                戻る
-                            </button>
+                            {rank ? <div className="text-5xl font-bold text-indigo-600 mb-2">{rank}位</div> : <div className="animate-pulse">集計中...</div>}
+                            <button onClick={onBack} className="mt-8 w-full bg-gray-200 text-gray-700 py-3 rounded-xl hover:bg-gray-300">戻る</button>
                         </div>
                     )}
                 </div>
@@ -873,11 +860,10 @@
         };
 
         const TeacherDashboard = ({ user, onBack }) => {
-            const [tab, setTab] = useState('tests'); // tests, data, students
+            const [tab, setTab] = useState('tests'); // tests, data, students, batch
             const [sessions, setSessions] = useState([]);
-            const [activeTestId, setActiveTestId] = useState(null);
+            const [batchInput, setBatchInput] = useState("");
             
-            // Load Sessions
             useEffect(() => {
                 const q = window.firebaseModules.query(
                     window.firebaseModules.collection(db, "test_sessions"),
@@ -892,17 +878,14 @@
             const createSession = async () => {
                 const name = prompt("テスト名を入力してください（例：1学期中間テスト）");
                 if (!name) return;
-                
-                // Generate consistent questions for everyone
                 const qs = generateQuestions(10).map(q => ({
                     correctId: q.correct.id,
                     choiceIds: q.choices.map(c => c.id),
                     type: q.type
                 }));
-
                 await window.firebaseModules.addDoc(window.firebaseModules.collection(db, "test_sessions"), {
                     name,
-                    targetClasses: ["3-A", "3-B", "3-C", "3-D", "3-E"], // Target all for now
+                    targetClasses: ["3-A", "3-B", "3-C", "3-D", "3-E"],
                     status: 'standby',
                     startTime: window.firebaseModules.serverTimestamp(),
                     questionSet: qs
@@ -910,35 +893,32 @@
             };
 
             const toggleStatus = async (session, newStatus) => {
-                await window.firebaseModules.updateDoc(window.firebaseModules.doc(db, "test_sessions", session.id), {
-                    status: newStatus
-                });
+                await window.firebaseModules.updateDoc(window.firebaseModules.doc(db, "test_sessions", session.id), { status: newStatus });
             };
 
             const downloadCSV = async () => {
-                // Fetch all Users
                 const userSnap = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, "users"));
-                const users = userSnap.docs.map(d => d.data()).filter(u => u.role === 'student');
+                let users = userSnap.docs.map(d => d.data()).filter(u => u.role === 'student');
+                
+                // Sort users by Class then Student Number
+                users.sort((a, b) => {
+                    if (a.classId !== b.classId) return a.classId.localeCompare(b.classId);
+                    return (parseInt(a.studentNumber) || 0) - (parseInt(b.studentNumber) || 0);
+                });
 
-                // Fetch all Test Results
                 const resultSnap = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, "test_results"));
                 const results = resultSnap.docs.map(d => d.data());
-
-                // Fetch all Sessions to map columns
                 const sessionSnap = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, "test_sessions"));
                 const sessionList = sessionSnap.docs.map(d => ({id: d.id, name: d.data().name}));
 
-                // Build CSV
-                // Header: Name, Class, Sess1, Sess2..., Stamps, Attempts, PassRate, (Blank), (Blank), AvgScore, DrillPassRate
-                let csv = "氏名,クラス";
+                let csv = "クラス,出席番号,氏名";
                 sessionList.forEach(s => csv += `,${s.name}`);
                 csv += ",スタンプ数,演習回数,演習合格数,,テスト平均,演習合格率\n";
 
                 users.forEach(u => {
-                    let line = `${u.name},${u.classId}`;
+                    let line = `${u.classId},${u.studentNumber || ""},${u.name}`;
                     let totalScore = 0;
                     let testCount = 0;
-
                     sessionList.forEach(s => {
                         const res = results.find(r => r.uid === u.uid && r.sessionId === s.id);
                         if (res) {
@@ -949,37 +929,54 @@
                             line += ",-";
                         }
                     });
-
                     const drillRate = u.drillStats?.attempts ? ((u.drillStats.passes / u.drillStats.attempts) * 100).toFixed(1) : 0;
                     const testAvg = testCount ? (totalScore / testCount).toFixed(1) : 0;
-
                     line += `,${u.stamps},${u.drillStats?.attempts || 0},${u.drillStats?.passes || 0},,${testAvg},${drillRate}%`;
                     csv += line + "\n";
                 });
 
-                // Download
                 const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csv], { type: 'text/csv;charset=utf-8;' });
                 const url = URL.createObjectURL(blob);
                 const link = document.createElement("a");
                 link.setAttribute("href", url);
-                link.setAttribute("download", `organic_chem_data_${new Date().toISOString().slice(0,10)}.csv`);
+                link.setAttribute("download", `organic_chem_data.csv`);
                 link.click();
             };
 
+            const handleBatchRegister = async () => {
+                const lines = batchInput.trim().split('\n');
+                const batch = window.firebaseModules.writeBatch(db);
+                let count = 0;
+
+                try {
+                    for (const line of lines) {
+                        // Expected format: email,name,classId,studentNumber
+                        const [email, name, classId, studentNumber] = line.split(',').map(s => s.trim());
+                        if (email && name && classId) {
+                            const ref = window.firebaseModules.doc(db, "pre_registrations", email);
+                            batch.set(ref, { name, classId, studentNumber: studentNumber || "", email });
+                            count++;
+                        }
+                    }
+                    await batch.commit();
+                    alert(`${count}件の生徒データを一括登録しました。生徒はログインするだけで登録が完了します。`);
+                    setBatchInput("");
+                } catch (e) {
+                    console.error(e);
+                    alert("登録中にエラーが発生しました。" + e.message);
+                }
+            };
+
             const clearStudents = async () => {
-                if(!confirm("本当に全生徒データを削除しますか？この操作は取り消せません。")) return;
-                // Batch delete is limited to 500, simple implementation:
+                if(!confirm("本当に全生徒データを削除しますか？")) return;
                 const snap = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, "users"));
                 const batch = window.firebaseModules.writeBatch(db);
                 let count = 0;
                 snap.forEach(d => {
-                    if (d.data().role === 'student') {
-                         batch.delete(d.ref);
-                         count++;
-                    }
+                    if (d.data().role === 'student') { batch.delete(d.ref); count++; }
                 });
                 await batch.commit();
-                alert(`${count}件の生徒データを削除しました。`);
+                alert(`${count}件削除しました。`);
             };
 
             return (
@@ -990,15 +987,14 @@
                     </header>
 
                     <div className="max-w-5xl mx-auto">
-                        {/* Tabs */}
                         <div className="flex space-x-2 mb-6">
-                            {['tests', 'data', 'students'].map(t => (
+                            {['tests', 'data', 'batch', 'students'].map(t => (
                                 <button 
                                     key={t}
                                     onClick={() => setTab(t)}
                                     className={`px-4 py-2 rounded-lg font-bold capitalize ${tab === t ? 'bg-purple-600 text-white' : 'bg-white text-purple-600'}`}
                                 >
-                                    {t === 'tests' ? 'テスト実施' : t === 'data' ? 'データ出力' : '生徒管理'}
+                                    {t === 'tests' ? 'テスト実施' : t === 'data' ? 'データ出力' : t === 'batch' ? '生徒一括登録' : '生徒管理'}
                                 </button>
                             ))}
                         </div>
@@ -1013,18 +1009,11 @@
                                         <div key={s.id} className="bg-white p-6 rounded-xl shadow flex justify-between items-center">
                                             <div>
                                                 <h3 className="font-bold text-lg">{s.name}</h3>
-                                                <span className={`inline-block px-2 py-1 text-xs rounded-full mt-1 
-                                                    ${s.status === 'active' ? 'bg-red-100 text-red-600 animate-pulse' : s.status === 'standby' ? 'bg-yellow-100 text-yellow-600' : 'bg-gray-100 text-gray-500'}`}>
-                                                    {s.status.toUpperCase()}
-                                                </span>
+                                                <span className={`inline-block px-2 py-1 text-xs rounded-full mt-1 ${s.status === 'active' ? 'bg-red-100 text-red-600 animate-pulse' : 'bg-gray-100 text-gray-500'}`}>{s.status.toUpperCase()}</span>
                                             </div>
                                             <div className="flex space-x-2">
-                                                {s.status === 'standby' && (
-                                                    <button onClick={() => toggleStatus(s, 'active')} className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600">開始</button>
-                                                )}
-                                                {s.status === 'active' && (
-                                                    <button onClick={() => toggleStatus(s, 'closed')} className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600">終了</button>
-                                                )}
+                                                {s.status === 'standby' && <button onClick={() => toggleStatus(s, 'active')} className="bg-green-500 text-white px-4 py-2 rounded">開始</button>}
+                                                {s.status === 'active' && <button onClick={() => toggleStatus(s, 'closed')} className="bg-red-500 text-white px-4 py-2 rounded">終了</button>}
                                             </div>
                                         </div>
                                     ))}
@@ -1035,9 +1024,31 @@
                         {tab === 'data' && (
                             <div className="bg-white p-8 rounded-xl shadow text-center">
                                 <h2 className="text-xl font-bold mb-4">成績データのエクスポート</h2>
-                                <p className="text-gray-500 mb-6">全生徒のテスト結果、スタンプ数、演習統計をCSV形式でダウンロードします。</p>
-                                <button onClick={downloadCSV} className="bg-blue-600 text-white px-8 py-4 rounded-xl shadow-lg hover:bg-blue-700 font-bold flex items-center justify-center mx-auto">
-                                    <span className="mr-2">📥</span> CSVダウンロード
+                                <button onClick={downloadCSV} className="bg-blue-600 text-white px-8 py-4 rounded-xl shadow-lg hover:bg-blue-700 font-bold">
+                                    📥 CSVダウンロード
+                                </button>
+                            </div>
+                        )}
+
+                        {tab === 'batch' && (
+                            <div className="bg-white p-8 rounded-xl shadow">
+                                <h2 className="text-xl font-bold mb-4">生徒の一括登録（事前名簿）</h2>
+                                <p className="text-sm text-gray-600 mb-4">
+                                    以下の形式でリストを入力してください。<br/>
+                                    ここで登録されたメールアドレスで生徒がログインすると、自動的に名前とクラスが設定されます。
+                                </p>
+                                <div className="bg-gray-100 p-4 rounded-lg mb-4 text-sm font-mono text-gray-600">
+                                    student1@school.ed.jp, 山田 太郎, 3-A, 1<br/>
+                                    student2@school.ed.jp, 鈴木 花子, 3-B, 15
+                                </div>
+                                <textarea 
+                                    className="w-full h-40 p-4 border rounded-lg mb-4 font-mono text-sm" 
+                                    placeholder="メールアドレス, 氏名, クラス, 出席番号 (改行区切り)"
+                                    value={batchInput}
+                                    onChange={(e) => setBatchInput(e.target.value)}
+                                />
+                                <button onClick={handleBatchRegister} className="bg-purple-600 text-white px-6 py-3 rounded-lg font-bold shadow hover:bg-purple-700">
+                                    一括登録を実行
                                 </button>
                             </div>
                         )}
@@ -1045,8 +1056,7 @@
                         {tab === 'students' && (
                             <div className="bg-white p-8 rounded-xl shadow border-l-4 border-red-500">
                                 <h2 className="text-xl font-bold mb-4 text-red-600">危険な操作</h2>
-                                <p className="text-gray-600 mb-6">年度更新時などに使用します。削除されたデータは復元できません。</p>
-                                <button onClick={clearStudents} className="bg-red-100 text-red-600 border border-red-200 px-6 py-3 rounded-lg hover:bg-red-200 font-bold">
+                                <button onClick={clearStudents} className="bg-red-100 text-red-600 border border-red-200 px-6 py-3 rounded-lg font-bold">
                                     全生徒データを削除する
                                 </button>
                             </div>
