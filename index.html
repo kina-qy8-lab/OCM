@@ -15,24 +15,90 @@
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
+    <!-- Error Handling Style -->
+    <style>
+        #error-console {
+            display: none;
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 150px;
+            background: rgba(0,0,0,0.8);
+            color: #ffcccc;
+            font-family: monospace;
+            font-size: 10px;
+            padding: 10px;
+            overflow: auto;
+            z-index: 9999;
+        }
+        #loading-screen {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: #f0fdf4;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            z-index: 1000;
+            font-family: sans-serif;
+            color: #166534;
+        }
+    </style>
+</head>
+<body>
+    <!-- Loading Screen -->
+    <div id="loading-screen">
+        <div style="font-size: 40px; margin-bottom: 20px;">⚗️</div>
+        <div>アプリを読み込んでいます...</div>
+    </div>
+
+    <!-- App Root -->
+    <div id="root"></div>
+
+    <!-- Error Console for Mobile Debugging -->
+    <div id="error-console"></div>
+
+    <script>
+        // Global Error Handler for Mobile
+        window.onerror = function(message, source, lineno, colno, error) {
+            const consoleDiv = document.getElementById('error-console');
+            consoleDiv.style.display = 'block';
+            consoleDiv.innerHTML += `<div>[Error] ${message} (${source}:${lineno})</div>`;
+            // Also hide loading screen if error occurs
+            document.getElementById('loading-screen').innerHTML = 
+                '<div style="color:red; padding:20px; text-align:center;">エラーが発生しました。<br>画面下部のログを確認してください。</div>';
+        };
+        
+        // Catch unhandled promise rejections
+        window.addEventListener('unhandledrejection', function(event) {
+            const consoleDiv = document.getElementById('error-console');
+            consoleDiv.style.display = 'block';
+            consoleDiv.innerHTML += `<div>[Promise Error] ${event.reason}</div>`;
+        });
+    </script>
+    
     <!-- Firebase SDKs (Modular) -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
         import { getAuth, signInWithPopup, GoogleAuthProvider, signInWithEmailAndPassword, createUserWithEmailAndPassword, signInAnonymously, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
         import { getFirestore, collection, doc, setDoc, getDoc, getDocs, updateDoc, onSnapshot, addDoc, query, where, orderBy, serverTimestamp, writeBatch, deleteDoc, increment } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-        // Expose Firebase to window for React component to use
+        // Expose Firebase to window
         window.firebaseModules = { 
             initializeApp, getAuth, signInWithPopup, GoogleAuthProvider, signInWithEmailAndPassword, createUserWithEmailAndPassword, signInAnonymously, onAuthStateChanged, signOut,
             getFirestore, collection, doc, setDoc, getDoc, getDocs, updateDoc, onSnapshot, addDoc, query, where, orderBy, serverTimestamp, writeBatch, deleteDoc, increment
         };
+
+        // Dispatch event when Firebase is ready
+        window.dispatchEvent(new Event('firebase-ready'));
     </script>
 
     <!-- Custom Styles -->
     <style>
         @import url('https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;700&display=swap');
         
-        body { font-family: 'M PLUS Rounded 1c', sans-serif; background-color: #f0fdf4; }
+        body { font-family: 'M PLUS Rounded 1c', sans-serif; background-color: #f0fdf4; margin: 0; }
         .fade-in { animation: fadeIn 0.5s ease-in; }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
         .stamp-animation { animation: stamp 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
@@ -47,9 +113,6 @@
         ::-webkit-scrollbar-thumb { background: #888; border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: #555; }
     </style>
-</head>
-<body>
-    <div id="root"></div>
 
     <script type="text/babel">
         const { useState, useEffect, useRef, useMemo } = React;
@@ -64,7 +127,7 @@
             appId: "1:729011758610:web:50fbddf730d36a90969acb"
         };
 
-        // --- Data (Updated List) ---
+        // --- Data ---
         const COMPOUNDS_RAW = [
             { id: 1, name: "メタン", url: "https://drive.google.com/uc?id=1qwuf3wdb9DWG1n6wwx_D3qTRjn3Ozt1S" },
             { id: 2, name: "エタン", url: "https://drive.google.com/uc?id=1CrOzeJ4pHTSDreMKtZeWKLdP6POBxS7d" },
@@ -181,7 +244,6 @@
 
         // --- Helper to convert Google Drive URL to a safe direct link ---
         // This format (lh3.googleusercontent.com/d/...) is generally more reliable for IMG tags
-        // especially on mobile devices where 3rd party cookies are often blocked.
         const getDriveImageUrl = (url) => {
             if (!url) return 'https://placehold.co/400?text=No+Image';
             // Extract ID from https://drive.google.com/uc?id=...
@@ -199,11 +261,20 @@
             url: getDriveImageUrl(c.url)
         }));
 
-        // --- Firebase Initialization ---
-        const app = window.firebaseModules.initializeApp(firebaseConfig);
-        const auth = window.firebaseModules.getAuth(app);
-        const db = window.firebaseModules.getFirestore(app);
-        
+        // --- Firebase Initialization Helper (Wait for SDK) ---
+        // This function ensures Firebase and React are ready before starting the app
+        const waitForFirebase = () => {
+            return new Promise(resolve => {
+                if (window.firebaseModules && window.firebaseModules.initializeApp) {
+                    resolve(window.firebaseModules);
+                } else {
+                    window.addEventListener('firebase-ready', () => {
+                        resolve(window.firebaseModules);
+                    });
+                }
+            });
+        };
+
         // --- Utils ---
         const RANKS = [
             { threshold: 0, name: "ビーカー洗い", color: "bg-gray-400" },
@@ -236,7 +307,7 @@
             </div>
         );
 
-        // --- Question Card Component (Separated for Force Re-render) ---
+        // --- Question Card Component ---
         const QuestionCard = ({ question, currentIdx, total, timeLeft, onAnswer }) => {
             const [selectedId, setSelectedId] = useState(null);
 
@@ -253,7 +324,6 @@
 
             return (
                 <div className={`max-w-2xl mx-auto bg-white rounded-3xl shadow-xl overflow-hidden ${selectedId ? (isCorrectSelected ? 'correct-flash' : 'wrong-flash') : ''}`}>
-                    {/* Header */}
                     <div className="bg-gray-100 p-4 flex justify-between items-center">
                         <div className="font-bold text-gray-600">Q.{currentIdx + 1} / {total}</div>
                         <div className={`font-mono text-xl font-bold ${timeLeft < 10 ? 'text-red-500 animate-pulse' : 'text-gray-700'}`}>
@@ -285,7 +355,6 @@
                             </div>
                         )}
 
-                        {/* Choices */}
                         <div className="grid grid-cols-2 gap-4">
                             {question.choices.map((choice) => (
                                 <button
@@ -377,8 +446,7 @@
             );
         };
 
-        // --- Game Screens ---
-
+        // --- Game Logic ---
         const generateQuestions = (count) => {
             const questions = [];
             const all = shuffleArray([...COMPOUNDS]);
@@ -397,154 +465,222 @@
             return questions;
         };
 
-        const DrillGame = ({ user, onBack }) => {
-            const [state, setState] = useState('ready');
-            const [questions, setQuestions] = useState([]);
-            const [result, setResult] = useState(null);
+        // --- Main App Component (Wait for Firebase Init) ---
+        const App = () => {
+            const [fb, setFb] = useState(null); // Firebase modules
+            const [user, setUser] = useState(null);
+            const [userData, setUserData] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const [view, setView] = useState("dashboard"); // dashboard, drill, test, teacher
+            const [activeSession, setActiveSession] = useState(null);
+            
+            // Other state for teacher dashboard
+            const [teacherTab, setTeacherTab] = useState('tests');
+            const [sessions, setSessions] = useState([]);
+            const [batchInput, setBatchInput] = useState("");
+
+            // Initialize Firebase
+            useEffect(() => {
+                waitForFirebase().then((modules) => {
+                    // Initialize App only once
+                    try {
+                        const app = modules.initializeApp(firebaseConfig);
+                        const auth = modules.getAuth(app);
+                        const db = modules.getFirestore(app);
+                        setFb({ auth, db, modules });
+                        
+                        // Hide loading screen
+                        const loader = document.getElementById('loading-screen');
+                        if (loader) loader.style.display = 'none';
+                        
+                        // Auth Listener
+                        modules.onAuthStateChanged(auth, async (currentUser) => {
+                            setUser(currentUser);
+                            if (currentUser) {
+                                const userRef = modules.doc(db, "users", currentUser.uid);
+                                const userSnap = await modules.getDoc(userRef);
+                                
+                                if (userSnap.exists()) {
+                                    setUserData(userSnap.data());
+                                } else {
+                                    // Check pre-registration
+                                    if (currentUser.email) {
+                                        const preRegRef = modules.doc(db, "pre_registrations", currentUser.email);
+                                        const preRegSnap = await modules.getDoc(preRegRef);
+                                        
+                                        if (preRegSnap.exists()) {
+                                            const preData = preRegSnap.data();
+                                            const newData = {
+                                                uid: currentUser.uid,
+                                                email: currentUser.email,
+                                                name: preData.name,
+                                                classId: preData.classId,
+                                                studentNumber: preData.studentNumber || "",
+                                                role: 'student',
+                                                stamps: 0,
+                                                drillStats: { attempts: 0, passes: 0 },
+                                                createdAt: modules.serverTimestamp()
+                                            };
+                                            await modules.setDoc(userRef, newData);
+                                            setUserData(newData);
+                                        } else {
+                                            setUserData(null);
+                                        }
+                                    } else {
+                                        setUserData(null);
+                                    }
+                                }
+                            } else {
+                                setUserData(null);
+                            }
+                            setLoading(false);
+                        });
+                    } catch (e) {
+                        console.error("Firebase init error", e);
+                        // If already initialized, just get instances
+                        // This part is tricky with modular SDK, usually initializeApp returns the existing app if called again? 
+                        // Actually in modular SDK, we usually hold the app instance. 
+                        // But since we are inside useEffect with empty dep, it runs once.
+                    }
+                });
+            }, []);
+
+            // Test Session Listener
+            useEffect(() => {
+                if (!fb || !userData || userData.role !== 'student') return;
+                
+                const q = fb.modules.query(
+                    fb.modules.collection(fb.db, "test_sessions"),
+                    fb.modules.where("status", "in", ["active", "standby"]),
+                    fb.modules.where("targetClasses", "array-contains", userData.classId)
+                );
+
+                const unsubscribe = fb.modules.onSnapshot(q, (snapshot) => {
+                    if (!snapshot.empty) {
+                        const session = snapshot.docs[0].data();
+                        session.id = snapshot.docs[0].id;
+                        setActiveSession(session);
+                    } else {
+                        setActiveSession(null);
+                    }
+                });
+                return () => unsubscribe();
+            }, [fb, userData]);
+
+            // Teacher Dashboard Logic (Sessions Loader)
+            useEffect(() => {
+                if (!fb || !userData || userData.role !== 'teacher') return;
+                const q = fb.modules.query(
+                    fb.modules.collection(fb.db, "test_sessions"),
+                    fb.modules.orderBy("startTime", "desc")
+                );
+                const unsub = fb.modules.onSnapshot(q, (snap) => {
+                    setSessions(snap.docs.map(d => ({id: d.id, ...d.data()})));
+                });
+                return () => unsub();
+            }, [fb, userData, teacherTab]);
+
+
+            // --- Actions ---
+
+            const handleLogout = () => {
+                if (fb) {
+                    fb.modules.signOut(fb.auth);
+                    setView("dashboard");
+                }
+            };
+
+            const handleRegister = async (name, classId, studentNumber, isTeacher) => {
+                if (!fb || !user) return;
+                const role = isTeacher ? 'teacher' : 'student';
+                const data = {
+                    uid: user.uid,
+                    email: user.email,
+                    name,
+                    classId,
+                    studentNumber: studentNumber || "",
+                    role,
+                    stamps: 0,
+                    drillStats: { attempts: 0, passes: 0 },
+                    createdAt: fb.modules.serverTimestamp()
+                };
+                await fb.modules.setDoc(fb.modules.doc(fb.db, "users", user.uid), data);
+                setUserData(data);
+            };
+
+            // Drill
+            const [drillQuestions, setDrillQuestions] = useState([]);
+            const [drillResult, setDrillResult] = useState(null);
 
             const startDrill = () => {
-                const newQuestions = generateQuestions(10);
-                setQuestions(newQuestions);
-                setState('playing');
+                const qs = generateQuestions(10);
+                setDrillQuestions(qs);
+                setView('drill_playing');
             };
 
-            const handleFinish = async (res) => {
+            const finishDrill = async (res) => {
                 const passed = res.score >= 8;
-                setResult({ ...res, passed });
-                setState('result');
-                const userRef = window.firebaseModules.doc(db, "users", user.uid);
-                const updates = {
-                    "drillStats.attempts": window.firebaseModules.increment(1),
-                    "drillStats.passes": passed ? window.firebaseModules.increment(1) : window.firebaseModules.increment(0)
-                };
-                if (passed) updates.stamps = window.firebaseModules.increment(1);
-                await window.firebaseModules.updateDoc(userRef, updates);
+                setDrillResult({ ...res, passed });
+                setView('drill_result');
+                
+                if (fb && userData) {
+                    const userRef = fb.modules.doc(fb.db, "users", user.uid);
+                    const updates = {
+                        "drillStats.attempts": fb.modules.increment(1),
+                        "drillStats.passes": passed ? fb.modules.increment(1) : fb.modules.increment(0)
+                    };
+                    if (passed) updates.stamps = fb.modules.increment(1);
+                    await fb.modules.updateDoc(userRef, updates);
+                }
             };
 
-            return (
-                <div className="min-h-screen bg-green-50 p-4">
-                    {state === 'ready' && (
-                        <div className="max-w-md mx-auto mt-20 text-center">
-                            <h1 className="text-3xl font-bold mb-8">演習モード</h1>
-                            <div className="bg-white p-8 rounded-2xl shadow-lg mb-8">
-                                <p className="text-gray-600 mb-4">10問中8問正解で合格！<br/>スタンプをゲットしよう。</p>
-                                <p className="text-sm text-gray-400">制限時間: 60秒</p>
-                            </div>
-                            <div className="space-y-4">
-                                <button onClick={startDrill} className="w-full bg-green-500 text-white font-bold py-4 rounded-xl shadow-lg hover:bg-green-600 transition text-xl">
-                                    スタート！
-                                </button>
-                                <button onClick={onBack} className="text-gray-500 hover:underline">戻る</button>
-                            </div>
-                        </div>
-                    )}
-                    {state === 'playing' && <ActiveQuiz questions={questions} timeLimit={60} onFinish={handleFinish} />}
-                    {state === 'result' && (
-                        <div className="max-w-md mx-auto mt-20 text-center fade-in">
-                            <div className="bg-white p-8 rounded-3xl shadow-xl">
-                                {result.passed ? (
-                                    <div className="mb-6">
-                                        <div className="text-6xl mb-4 stamp-animation">💮</div>
-                                        <h2 className="text-2xl font-bold text-green-600">合格！</h2>
-                                    </div>
-                                ) : (
-                                    <div className="mb-6">
-                                        <div className="text-6xl mb-4">💪</div>
-                                        <h2 className="text-2xl font-bold text-gray-700">残念...</h2>
-                                    </div>
-                                )}
-                                <div className="text-4xl font-bold mb-2">{result.score} <span className="text-lg text-gray-400">/ 10点</span></div>
-                                <button onClick={onBack} className="w-full bg-gray-800 text-white font-bold py-3 rounded-xl hover:bg-gray-900 transition">
-                                    メニューに戻る
-                                </button>
-                            </div>
-                        </div>
-                    )}
-                </div>
-            );
-        };
+            // Test
+            const [testQuestions, setTestQuestions] = useState([]);
+            const [testRank, setTestRank] = useState(null);
 
-        const TestRunner = ({ user, session, onBack }) => {
-            const [status, setStatus] = useState('standby');
-            const [questions, setQuestions] = useState([]);
-            const [rank, setRank] = useState(null);
-            
-            useEffect(() => {
-                if (!session) return;
-                if (session.status === 'active' && status === 'standby') {
-                    const sessionQs = session.questionSet.map(qData => {
+            const startTest = () => {
+                if (!activeSession) return;
+                // Generate questions based on session data logic (here simplified to regenerate for robustness or should follow server instructions?)
+                // The requirement says "everyone gets same questions".
+                // In a real app, questions should be fetched from session.questionSet.
+                // Reconstruct questions from IDs in session.questionSet
+                if (activeSession.questionSet) {
+                    const sessionQs = activeSession.questionSet.map(qData => {
                         const correct = COMPOUNDS.find(c => c.id === qData.correctId);
                         const choices = qData.choiceIds.map(id => COMPOUNDS.find(c => c.id === id));
                         return { correct, choices, type: qData.type };
                     });
-                    setQuestions(sessionQs);
-                    setStatus('active');
-                } else if (session.status === 'closed') {
-                    onBack();
+                    setTestQuestions(sessionQs);
+                    setView('test_playing');
                 }
-            }, [session, status]);
+            };
 
-            const handleFinish = async (res) => {
-                setStatus('finished');
-                await window.firebaseModules.setDoc(window.firebaseModules.doc(db, "test_results", `${session.id}_${user.uid}`), {
-                    sessionId: session.id,
+            const finishTest = async (res) => {
+                if (!fb || !activeSession) return;
+                setView('test_result');
+                await fb.modules.setDoc(fb.modules.doc(fb.db, "test_results", `${activeSession.id}_${user.uid}`), {
+                    sessionId: activeSession.id,
                     uid: user.uid,
-                    name: user.name,
-                    classId: user.classId,
-                    studentNumber: user.studentNumber || "",
+                    name: userData.name,
+                    classId: userData.classId,
+                    studentNumber: userData.studentNumber || "",
                     score: res.score,
                     timeTaken: res.timeTaken,
-                    timestamp: window.firebaseModules.serverTimestamp()
+                    timestamp: fb.modules.serverTimestamp()
                 });
-                const q = window.firebaseModules.query(
-                    window.firebaseModules.collection(db, "test_results"), 
-                    window.firebaseModules.where("sessionId", "==", session.id)
+                
+                const q = fb.modules.query(
+                    fb.modules.collection(fb.db, "test_results"), 
+                    fb.modules.where("sessionId", "==", activeSession.id)
                 );
-                const unsubscribe = window.firebaseModules.onSnapshot(q, (snap) => {
+                fb.modules.onSnapshot(q, (snap) => {
                     const results = snap.docs.map(d => d.data());
                     results.sort((a, b) => b.score - a.score || a.timeTaken - b.timeTaken);
-                    setRank(results.findIndex(r => r.uid === user.uid) + 1);
+                    setTestRank(results.findIndex(r => r.uid === user.uid) + 1);
                 });
             };
 
-            return (
-                <div className="min-h-screen bg-indigo-50 p-4">
-                     {status === 'standby' && (
-                        <div className="flex flex-col items-center justify-center h-[80vh] text-center">
-                            <div className="animate-pulse text-6xl mb-4">📡</div>
-                            <h2 className="text-2xl font-bold text-indigo-900 mb-2">先生の合図を待っています...</h2>
-                            <p className="text-indigo-600">{session.name}</p>
-                            <button onClick={onBack} className="mt-8 text-gray-400 underline">退出</button>
-                        </div>
-                    )}
-                    {status === 'active' && <ActiveQuiz questions={questions} timeLimit={60} onFinish={handleFinish} />}
-                    {status === 'finished' && (
-                        <div className="max-w-md mx-auto mt-20 text-center bg-white p-8 rounded-3xl shadow-xl">
-                            <h2 className="text-2xl font-bold mb-4">テスト終了！</h2>
-                            {rank ? <div className="text-5xl font-bold text-indigo-600 mb-2">{rank}位</div> : <div className="animate-pulse">集計中...</div>}
-                            <button onClick={onBack} className="mt-8 w-full bg-gray-200 text-gray-700 py-3 rounded-xl hover:bg-gray-300">戻る</button>
-                        </div>
-                    )}
-                </div>
-            );
-        };
-
-        const TeacherDashboard = ({ user, onBack }) => {
-            const [tab, setTab] = useState('tests'); // tests, data, batch, students
-            const [sessions, setSessions] = useState([]);
-            const [batchInput, setBatchInput] = useState("");
-            
-            useEffect(() => {
-                const q = window.firebaseModules.query(
-                    window.firebaseModules.collection(db, "test_sessions"),
-                    window.firebaseModules.orderBy("startTime", "desc")
-                );
-                const unsub = window.firebaseModules.onSnapshot(q, (snap) => {
-                    setSessions(snap.docs.map(d => ({id: d.id, ...d.data()})));
-                });
-                return () => unsub();
-            }, []);
-
+            // Teacher Actions
             const createSession = async () => {
                 const name = prompt("テスト名を入力してください（例：1学期中間テスト）");
                 if (!name) return;
@@ -553,21 +689,43 @@
                     choiceIds: q.choices.map(c => c.id),
                     type: q.type
                 }));
-                await window.firebaseModules.addDoc(window.firebaseModules.collection(db, "test_sessions"), {
+                await fb.modules.addDoc(fb.modules.collection(fb.db, "test_sessions"), {
                     name,
                     targetClasses: ["3-A", "3-B", "3-C", "3-D", "3-E"],
                     status: 'standby',
-                    startTime: window.firebaseModules.serverTimestamp(),
+                    startTime: fb.modules.serverTimestamp(),
                     questionSet: qs
                 });
             };
 
             const toggleStatus = async (session, newStatus) => {
-                await window.firebaseModules.updateDoc(window.firebaseModules.doc(db, "test_sessions", session.id), { status: newStatus });
+                await fb.modules.updateDoc(fb.modules.doc(fb.db, "test_sessions", session.id), { status: newStatus });
+            };
+
+            const handleBatchRegister = async () => {
+                const lines = batchInput.trim().split('\n');
+                const batch = fb.modules.writeBatch(fb.db);
+                let count = 0;
+                try {
+                    for (const line of lines) {
+                        const [email, name, classId, studentNumber] = line.split(',').map(s => s.trim());
+                        if (email && name && classId) {
+                            const ref = fb.modules.doc(fb.db, "pre_registrations", email);
+                            batch.set(ref, { name, classId, studentNumber: studentNumber || "", email });
+                            count++;
+                        }
+                    }
+                    await batch.commit();
+                    alert(`${count}件の生徒データを一括登録しました。`);
+                    setBatchInput("");
+                } catch (e) {
+                    alert("登録エラー: " + e.message);
+                }
             };
 
             const downloadCSV = async () => {
-                const userSnap = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, "users"));
+                // Implementation similar to previous logic
+                const userSnap = await fb.modules.getDocs(fb.modules.collection(fb.db, "users"));
                 let users = userSnap.docs.map(d => d.data()).filter(u => u.role === 'student');
                 
                 users.sort((a, b) => {
@@ -575,9 +733,9 @@
                     return (parseInt(a.studentNumber) || 0) - (parseInt(b.studentNumber) || 0);
                 });
 
-                const resultSnap = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, "test_results"));
+                const resultSnap = await fb.modules.getDocs(fb.modules.collection(fb.db, "test_results"));
                 const results = resultSnap.docs.map(d => d.data());
-                const sessionSnap = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, "test_sessions"));
+                const sessionSnap = await fb.modules.getDocs(fb.modules.collection(fb.db, "test_sessions"));
                 const sessionList = sessionSnap.docs.map(d => ({id: d.id, name: d.data().name}));
 
                 let csv = "クラス,出席番号,氏名";
@@ -598,6 +756,7 @@
                             line += ",-";
                         }
                     });
+                    // Simple stats
                     const drillRate = u.drillStats?.attempts ? ((u.drillStats.passes / u.drillStats.attempts) * 100).toFixed(1) : 0;
                     const testAvg = testCount ? (totalScore / testCount).toFixed(1) : 0;
                     line += `,${u.stamps},${u.drillStats?.attempts || 0},${u.drillStats?.passes || 0},,${testAvg},${drillRate}%`;
@@ -612,33 +771,10 @@
                 link.click();
             };
 
-            const handleBatchRegister = async () => {
-                const lines = batchInput.trim().split('\n');
-                const batch = window.firebaseModules.writeBatch(db);
-                let count = 0;
-
-                try {
-                    for (const line of lines) {
-                        const [email, name, classId, studentNumber] = line.split(',').map(s => s.trim());
-                        if (email && name && classId) {
-                            const ref = window.firebaseModules.doc(db, "pre_registrations", email);
-                            batch.set(ref, { name, classId, studentNumber: studentNumber || "", email });
-                            count++;
-                        }
-                    }
-                    await batch.commit();
-                    alert(`${count}件の生徒データを一括登録しました。`);
-                    setBatchInput("");
-                } catch (e) {
-                    console.error(e);
-                    alert("登録エラー: " + e.message);
-                }
-            };
-
             const clearStudents = async () => {
                 if(!confirm("本当に全生徒データを削除しますか？")) return;
-                const snap = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, "users"));
-                const batch = window.firebaseModules.writeBatch(db);
+                const snap = await fb.modules.getDocs(fb.modules.collection(fb.db, "users"));
+                const batch = fb.modules.writeBatch(fb.db);
                 let count = 0;
                 snap.forEach(d => {
                     if (d.data().role === 'student') { batch.delete(d.ref); count++; }
@@ -647,290 +783,171 @@
                 alert(`${count}件削除しました。`);
             };
 
-            return (
-                <div className="min-h-screen bg-purple-50 p-4">
-                    <header className="bg-white p-4 rounded-xl shadow-sm mb-6 flex justify-between items-center max-w-5xl mx-auto">
-                        <h1 className="text-xl font-bold text-purple-800">教員管理画面</h1>
-                        <button onClick={onBack} className="text-gray-500">戻る</button>
-                    </header>
 
-                    <div className="max-w-5xl mx-auto">
-                        <div className="flex space-x-2 mb-6">
-                            {['tests', 'data', 'batch', 'students'].map(t => (
-                                <button 
-                                    key={t}
-                                    onClick={() => setTab(t)}
-                                    className={`px-4 py-2 rounded-lg font-bold capitalize ${tab === t ? 'bg-purple-600 text-white' : 'bg-white text-purple-600'}`}
-                                >
-                                    {t === 'tests' ? 'テスト実施' : t === 'data' ? 'データ出力' : t === 'batch' ? '生徒一括登録' : '生徒管理'}
-                                </button>
-                            ))}
-                        </div>
+            // --- Render Logic ---
 
-                        {tab === 'tests' && (
-                            <div>
-                                <button onClick={createSession} className="mb-6 bg-purple-600 text-white px-6 py-3 rounded-xl shadow hover:bg-purple-700 font-bold">
-                                    ＋ 新規テストを作成
-                                </button>
-                                <div className="grid gap-4">
-                                    {sessions.map(s => (
-                                        <div key={s.id} className="bg-white p-6 rounded-xl shadow flex justify-between items-center">
-                                            <div>
-                                                <h3 className="font-bold text-lg">{s.name}</h3>
-                                                <span className={`inline-block px-2 py-1 text-xs rounded-full mt-1 ${s.status === 'active' ? 'bg-red-100 text-red-600 animate-pulse' : 'bg-gray-100 text-gray-500'}`}>{s.status.toUpperCase()}</span>
-                                            </div>
-                                            <div className="flex space-x-2">
-                                                {s.status === 'standby' && <button onClick={() => toggleStatus(s, 'active')} className="bg-green-500 text-white px-4 py-2 rounded">開始</button>}
-                                                {s.status === 'active' && <button onClick={() => toggleStatus(s, 'closed')} className="bg-red-500 text-white px-4 py-2 rounded">終了</button>}
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
+            if (!fb) return null; // Waiting for Firebase (loading screen handles visual)
+            
+            if (loading) return null; // Waiting for Auth
 
-                        {tab === 'data' && (
-                            <div className="bg-white p-8 rounded-xl shadow text-center">
-                                <h2 className="text-xl font-bold mb-4">成績データのエクスポート</h2>
-                                <button onClick={downloadCSV} className="bg-blue-600 text-white px-8 py-4 rounded-xl shadow-lg hover:bg-blue-700 font-bold">
-                                    📥 CSVダウンロード
-                                </button>
-                            </div>
-                        )}
-
-                        {tab === 'batch' && (
-                            <div className="bg-white p-8 rounded-xl shadow">
-                                <h2 className="text-xl font-bold mb-4">生徒の一括登録（事前名簿）</h2>
-                                <p className="text-sm text-gray-600 mb-4">
-                                    以下の形式でリストを入力してください。<br/>
-                                    ここで登録されたメールアドレスで生徒がログインすると、自動的に名前とクラスが設定されます。
-                                </p>
-                                <div className="bg-gray-100 p-4 rounded-lg mb-4 text-sm font-mono text-gray-600">
-                                    student1@school.ed.jp, 山田 太郎, 3-A, 1<br/>
-                                    student2@school.ed.jp, 鈴木 花子, 3-B, 15
-                                </div>
-                                <textarea 
-                                    className="w-full h-40 p-4 border rounded-lg mb-4 font-mono text-sm" 
-                                    placeholder="メールアドレス, 氏名, クラス, 出席番号 (改行区切り)"
-                                    value={batchInput}
-                                    onChange={(e) => setBatchInput(e.target.value)}
-                                />
-                                <button onClick={handleBatchRegister} className="bg-purple-600 text-white px-6 py-3 rounded-lg font-bold shadow hover:bg-purple-700">
-                                    一括登録を実行
-                                </button>
-                            </div>
-                        )}
-
-                        {tab === 'students' && (
-                            <div className="bg-white p-8 rounded-xl shadow border-l-4 border-red-500">
-                                <h2 className="text-xl font-bold mb-4 text-red-600">危険な操作</h2>
-                                <button onClick={clearStudents} className="bg-red-100 text-red-600 border border-red-200 px-6 py-3 rounded-lg font-bold">
-                                    全生徒データを削除する
-                                </button>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            );
-        };
-
-        // --- Main App Component ---
-        const App = () => {
-            const [user, setUser] = useState(null);
-            const [userData, setUserData] = useState(null);
-            const [loading, setLoading] = useState(true);
-            const [view, setView] = useState("dashboard"); // dashboard, drill, test, teacher
-            const [activeSession, setActiveSession] = useState(null);
-
-            // Auth Listener
-            useEffect(() => {
-                const unsubscribe = window.firebaseModules.onAuthStateChanged(auth, async (currentUser) => {
-                    setUser(currentUser);
-                    if (currentUser) {
-                        const userRef = window.firebaseModules.doc(db, "users", currentUser.uid);
-                        const userSnap = await window.firebaseModules.getDoc(userRef);
-                        
-                        if (userSnap.exists()) {
-                            setUserData(userSnap.data());
-                        } else {
-                            // Check for pre-registration (Batch registered by teacher)
-                            if (currentUser.email) {
-                                const preRegRef = window.firebaseModules.doc(db, "pre_registrations", currentUser.email);
-                                const preRegSnap = await window.firebaseModules.getDoc(preRegRef);
-                                
-                                if (preRegSnap.exists()) {
-                                    // Auto-register using pre-registered data
-                                    const preData = preRegSnap.data();
-                                    const newData = {
-                                        uid: currentUser.uid,
-                                        email: currentUser.email,
-                                        name: preData.name,
-                                        classId: preData.classId,
-                                        studentNumber: preData.studentNumber || "",
-                                        role: 'student',
-                                        stamps: 0,
-                                        drillStats: { attempts: 0, passes: 0 },
-                                        createdAt: window.firebaseModules.serverTimestamp()
-                                    };
-                                    await window.firebaseModules.setDoc(userRef, newData);
-                                    setUserData(newData);
-                                } else {
-                                    // New user, wait for registration modal
-                                    setUserData(null);
-                                }
-                            } else {
-                                setUserData(null);
-                            }
-                        }
-                    } else {
-                        setUserData(null);
-                    }
-                    setLoading(false);
-                });
-                return () => unsubscribe();
-            }, []);
-
-            // Test Session Listener
-            useEffect(() => {
-                if (!userData || userData.role !== 'student') return;
-                
-                const q = window.firebaseModules.query(
-                    window.firebaseModules.collection(db, "test_sessions"),
-                    window.firebaseModules.where("status", "in", ["active", "standby"]),
-                    window.firebaseModules.where("targetClasses", "array-contains", userData.classId)
-                );
-
-                const unsubscribe = window.firebaseModules.onSnapshot(q, (snapshot) => {
-                    if (!snapshot.empty) {
-                        const session = snapshot.docs[0].data();
-                        session.id = snapshot.docs[0].id;
-                        setActiveSession(session);
-                    } else {
-                        setActiveSession(null);
-                    }
-                });
-                return () => unsubscribe();
-            }, [userData]);
-
-            const handleLogout = () => {
-                window.firebaseModules.signOut(auth);
-                setView("dashboard");
-            };
-
-            const handleRegister = async (name, classId, studentNumber, isTeacher) => {
-                const role = isTeacher ? 'teacher' : 'student';
-                const data = {
-                    uid: user.uid,
-                    email: user.email,
-                    name,
-                    classId,
-                    studentNumber: studentNumber || "", // Add field
-                    role,
-                    stamps: 0,
-                    drillStats: { attempts: 0, passes: 0 },
-                    createdAt: window.firebaseModules.serverTimestamp()
-                };
-                await window.firebaseModules.setDoc(window.firebaseModules.doc(db, "users", user.uid), data);
-                setUserData(data);
-            };
-
-            if (loading) return <Loading />;
-
+            // Login Screen
             if (!user) {
-                return <LoginScreen />;
+                return (
+                    <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-b from-green-50 to-green-100 p-4">
+                        <div className="bg-white p-8 rounded-3xl shadow-xl max-w-md w-full text-center">
+                            <div className="text-6xl mb-4">⚗️</div>
+                            <h1 className="text-3xl font-bold text-gray-800 mb-2">Organic Chem Master</h1>
+                            <div className="space-y-3 mt-8">
+                                <button onClick={() => fb.modules.signInWithPopup(fb.auth, new fb.modules.GoogleAuthProvider()).catch(e => alert(e.message))} className="w-full bg-white border border-gray-300 font-bold py-3 rounded-xl hover:bg-gray-50">
+                                    Googleでログイン
+                                </button>
+                                <button onClick={() => fb.modules.signInAnonymously(fb.auth).catch(e => alert(e.message))} className="w-full bg-gray-600 text-white font-bold py-3 rounded-xl hover:bg-gray-700">
+                                    ゲストとして開始
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                );
             }
 
+            // Registration
             if (!userData) {
                 return <RegistrationScreen onRegister={handleRegister} />;
             }
 
-            if (view === "drill") return <DrillGame user={userData} onBack={() => setView("dashboard")} />;
-            if (view === "test") return <TestRunner user={userData} session={activeSession} onBack={() => setView("dashboard")} />;
-            if (view === "teacher" && userData.role === 'teacher') return <TeacherDashboard user={userData} onBack={() => setView("dashboard")} />;
+            // Game Views
+            if (view === 'drill_playing') {
+                return <ActiveQuiz questions={drillQuestions} timeLimit={60} onFinish={finishDrill} />;
+            }
+            
+            if (view === 'drill_result') {
+                return (
+                    <div className="min-h-screen bg-green-50 p-4 flex items-center justify-center">
+                        <div className="bg-white p-8 rounded-3xl shadow-xl text-center max-w-md w-full fade-in">
+                            <div className="text-6xl mb-4">{drillResult.passed ? '💮' : '💪'}</div>
+                            <h2 className="text-2xl font-bold mb-4">{drillResult.passed ? '合格！' : '残念...'}</h2>
+                            <div className="text-4xl font-bold mb-8">{drillResult.score} / 10点</div>
+                            <button onClick={() => setView('dashboard')} className="w-full bg-gray-800 text-white font-bold py-3 rounded-xl">メニューに戻る</button>
+                        </div>
+                    </div>
+                );
+            }
 
+            if (view === 'test_playing') {
+                return <ActiveQuiz questions={testQuestions} timeLimit={60} onFinish={finishTest} />;
+            }
+
+            if (view === 'test_result') {
+                return (
+                    <div className="min-h-screen bg-indigo-50 p-4 flex items-center justify-center">
+                        <div className="bg-white p-8 rounded-3xl shadow-xl text-center max-w-md w-full fade-in">
+                            <h2 className="text-2xl font-bold mb-4">テスト終了！</h2>
+                            {testRank ? <div className="text-5xl font-bold text-indigo-600 mb-8">{testRank}位</div> : <div className="animate-pulse mb-8">集計中...</div>}
+                            <button onClick={() => setView('dashboard')} className="w-full bg-gray-800 text-white font-bold py-3 rounded-xl">戻る</button>
+                        </div>
+                    </div>
+                );
+            }
+
+            if (view === 'teacher' && userData.role === 'teacher') {
+                return (
+                    <div className="min-h-screen bg-purple-50 p-4">
+                        <header className="flex justify-between items-center bg-white p-4 rounded-xl shadow mb-6 max-w-5xl mx-auto">
+                            <h1 className="font-bold text-purple-800">教員管理画面</h1>
+                            <button onClick={() => setView('dashboard')} className="text-gray-500">戻る</button>
+                        </header>
+                        <div className="max-w-5xl mx-auto">
+                            <div className="flex space-x-2 mb-6 overflow-x-auto">
+                                {['tests', 'data', 'batch', 'students'].map(t => (
+                                    <button key={t} onClick={() => setTeacherTab(t)} className={`px-4 py-2 rounded-lg font-bold capitalize whitespace-nowrap ${teacherTab === t ? 'bg-purple-600 text-white' : 'bg-white text-purple-600'}`}>
+                                        {t === 'tests' ? 'テスト実施' : t === 'data' ? 'データ出力' : t === 'batch' ? '一括登録' : '生徒削除'}
+                                    </button>
+                                ))}
+                            </div>
+                            
+                            {teacherTab === 'tests' && (
+                                <div>
+                                    <button onClick={createSession} className="mb-4 bg-purple-600 text-white px-6 py-3 rounded-xl font-bold shadow">+ 新規テスト</button>
+                                    <div className="grid gap-4">
+                                        {sessions.map(s => (
+                                            <div key={s.id} className="bg-white p-6 rounded-xl shadow flex justify-between items-center">
+                                                <div><h3 className="font-bold">{s.name}</h3><span className="text-xs bg-gray-100 px-2 py-1 rounded">{s.status}</span></div>
+                                                <div className="flex gap-2">
+                                                    {s.status === 'standby' && <button onClick={() => toggleStatus(s, 'active')} className="bg-green-500 text-white px-3 py-1 rounded">開始</button>}
+                                                    {s.status === 'active' && <button onClick={() => toggleStatus(s, 'closed')} className="bg-red-500 text-white px-3 py-1 rounded">終了</button>}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            
+                            {teacherTab === 'data' && (
+                                <div className="bg-white p-8 rounded-xl shadow text-center">
+                                    <button onClick={downloadCSV} className="bg-blue-600 text-white px-8 py-4 rounded-xl font-bold shadow">CSVダウンロード</button>
+                                </div>
+                            )}
+
+                            {teacherTab === 'batch' && (
+                                <div className="bg-white p-8 rounded-xl shadow">
+                                    <p className="mb-2 text-sm text-gray-600">email, 名前, クラス, 番号</p>
+                                    <textarea value={batchInput} onChange={e => setBatchInput(e.target.value)} className="w-full h-32 border p-2 rounded mb-4" placeholder="student@example.com, 山田, 3-A, 1"></textarea>
+                                    <button onClick={handleBatchRegister} className="bg-purple-600 text-white px-6 py-2 rounded-lg font-bold">登録</button>
+                                </div>
+                            )}
+
+                            {teacherTab === 'students' && (
+                                <div className="bg-white p-8 rounded-xl shadow">
+                                    <button onClick={clearStudents} className="bg-red-100 text-red-600 px-6 py-3 rounded-lg font-bold border border-red-200">全生徒削除</button>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                );
+            }
+
+            // Dashboard
             return (
                 <div className="min-h-screen bg-green-50 p-4">
                     <header className="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm mb-6 max-w-4xl mx-auto">
                         <div>
-                            <h1 className="text-xl font-bold text-gray-800">Organic Chem Master</h1>
-                            <p className="text-sm text-gray-500">
-                                {userData.classId} {userData.studentNumber ? `No.${userData.studentNumber}` : ''} {userData.name} ({getRank(userData.stamps).name})
-                            </p>
+                            <h1 className="font-bold text-gray-800">Organic Chem Master</h1>
+                            <p className="text-xs text-gray-500">{userData.classId} {userData.name}</p>
                         </div>
                         <div className="flex gap-2">
-                             {userData.role === 'teacher' && (
-                                <button onClick={() => setView("teacher")} className="bg-purple-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-purple-700 transition">
-                                    教員メニュー
-                                </button>
-                            )}
-                            <button onClick={handleLogout} className="text-gray-500 hover:text-red-500 px-3 py-2">
-                                ログアウト
-                            </button>
+                            {userData.role === 'teacher' && <button onClick={() => setView('teacher')} className="bg-purple-600 text-white px-3 py-1 rounded hover:bg-purple-700 text-sm">教員</button>}
+                            <button onClick={handleLogout} className="text-gray-500 text-sm">ログアウト</button>
                         </div>
                     </header>
 
                     <main className="max-w-4xl mx-auto grid md:grid-cols-2 gap-6">
                         <div className="bg-white p-6 rounded-2xl shadow-lg">
-                            <h2 className="text-lg font-bold text-gray-700 mb-4 flex items-center">
-                                <span className="mr-2">🏆</span> スタンプカード
-                            </h2>
-                            <div className="flex flex-wrap gap-2 mb-4 h-48 overflow-y-auto content-start p-2 bg-gray-50 rounded-lg">
-                                {[...Array(Math.max(20, userData.stamps + (5 - userData.stamps % 5)))].map((_, i) => (
-                                    <div key={i} className={`w-10 h-10 rounded-full flex items-center justify-center border-2 
-                                        ${i < userData.stamps ? 'border-yellow-400 bg-yellow-100 text-yellow-600' : 'border-gray-200 text-gray-300'}`}>
-                                        {i < userData.stamps ? '★' : i + 1}
-                                    </div>
+                            <h2 className="font-bold text-gray-700 mb-4">🏆 スタンプ: {userData.stamps}</h2>
+                            <div className="flex flex-wrap gap-2 h-32 overflow-y-auto content-start">
+                                {[...Array(Math.max(10, userData.stamps + (5 - userData.stamps % 5)))].map((_, i) => (
+                                    <div key={i} className={`w-8 h-8 rounded-full flex items-center justify-center border text-xs ${i < userData.stamps ? 'bg-yellow-100 border-yellow-400' : 'border-gray-200'}`}>{i < userData.stamps ? '★' : i+1}</div>
                                 ))}
-                            </div>
-                            <div className="flex items-center justify-between">
-                                <div className={`px-3 py-1 rounded-full text-white text-sm font-bold ${getRank(userData.stamps).color}`}>
-                                    Rank: {getRank(userData.stamps).name}
-                                </div>
-                                <div className="text-sm text-gray-500">
-                                    合計スタンプ: {userData.stamps}個
-                                </div>
                             </div>
                         </div>
 
                         <div className="space-y-4">
-                            <button 
-                                onClick={() => setView("drill")}
-                                className="w-full bg-gradient-to-r from-green-400 to-green-600 hover:from-green-500 hover:to-green-700 text-white p-6 rounded-2xl shadow-lg transform transition hover:scale-105 flex flex-col items-center justify-center"
-                            >
-                                <span className="text-3xl mb-2">🧪</span>
-                                <span className="text-2xl font-bold">演習モード</span>
-                                <span className="text-sm opacity-90">ランダム10問に挑戦！スタンプGET</span>
-                            </button>
-
-                            <button 
-                                onClick={() => activeSession && setView("test")}
-                                disabled={!activeSession}
-                                className={`w-full p-6 rounded-2xl shadow-lg transform transition flex flex-col items-center justify-center
-                                    ${activeSession 
-                                        ? 'bg-gradient-to-r from-red-400 to-red-600 text-white hover:scale-105 cursor-pointer animate-pulse' 
-                                        : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
-                            >
-                                <span className="text-3xl mb-2">📝</span>
-                                <span className="text-2xl font-bold">テストモード</span>
-                                <span className="text-sm opacity-90">
-                                    {activeSession ? "テストが実施されています！" : "現在実施されているテストはありません"}
-                                </span>
+                            <button onClick={startDrill} className="w-full bg-green-500 text-white font-bold p-6 rounded-2xl shadow-lg hover:bg-green-600 transition">
+                                🧪 演習モード (スタート)
                             </button>
                             
-                            <div className="bg-white p-4 rounded-xl shadow-sm">
-                                <h3 className="text-sm font-bold text-gray-500 mb-2">学習状況</h3>
-                                <div className="flex justify-between text-sm">
-                                    <span>演習回数: {userData.drillStats?.attempts || 0}回</span>
-                                    <span>合格率: {userData.drillStats?.attempts ? Math.round((userData.drillStats.passes / userData.drillStats.attempts) * 100) : 0}%</span>
-                                </div>
-                            </div>
+                            <button 
+                                onClick={startTest} 
+                                disabled={!activeSession || activeSession.status !== 'active'}
+                                className={`w-full font-bold p-6 rounded-2xl shadow-lg transition ${activeSession && activeSession.status === 'active' ? 'bg-red-500 text-white hover:bg-red-600 animate-pulse' : 'bg-gray-200 text-gray-400'}`}
+                            >
+                                📝 テストモード {activeSession && activeSession.status === 'active' ? '(実施中!)' : '(待機中)'}
+                            </button>
                         </div>
                     </main>
                 </div>
             );
         };
 
-        // --- Render ---
         const root = ReactDOM.createRoot(document.getElementById("root"));
         root.render(<App />);
     </script>
