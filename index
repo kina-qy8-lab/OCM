@@ -1,0 +1,1030 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>有機化学マスター - Organic Chem Master</title>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel (for JSX) -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Firebase SDKs (Modular) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+        import { getFirestore, collection, doc, setDoc, getDoc, getDocs, updateDoc, onSnapshot, addDoc, query, where, serverTimestamp, writeBatch, deleteDoc, increment } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        // Expose Firebase to window for React component to use
+        window.firebaseModules = { 
+            initializeApp, getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut,
+            getFirestore, collection, doc, setDoc, getDoc, getDocs, updateDoc, onSnapshot, addDoc, query, where, serverTimestamp, writeBatch, deleteDoc, increment
+        };
+    </script>
+
+    <!-- Custom Styles for Animations -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;700&display=swap');
+        
+        body {
+            font-family: 'M PLUS Rounded 1c', sans-serif;
+            background-color: #f0fdf4; /* Green-50 */
+        }
+        
+        .fade-in { animation: fadeIn 0.5s ease-in; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+        .slide-up { animation: slideUp 0.5s ease-out; }
+        @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+        .stamp-animation { animation: stamp 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+        @keyframes stamp { 
+            0% { transform: scale(3); opacity: 0; } 
+            100% { transform: scale(1); opacity: 1; } 
+        }
+
+        .correct-flash { animation: flashGreen 0.5s; }
+        @keyframes flashGreen { 0%, 100% { background-color: white; } 50% { background-color: #bbf7d0; } }
+
+        .wrong-flash { animation: flashRed 0.5s; }
+        @keyframes flashRed { 0%, 100% { background-color: white; } 50% { background-color: #fecaca; } }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #888; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #555; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+
+        // --- Configuration & Data ---
+        
+        const firebaseConfig = {
+            apiKey: "AIzaSyCPziY4qZiRI0LbWXrSCnsOhJUxNwvdxxE",
+            authDomain: "organic-chem-master-74df8.firebaseapp.com",
+            projectId: "organic-chem-master-74df8",
+            storageBucket: "organic-chem-master-74df8.firebasestorage.app",
+            messagingSenderId: "729011758610",
+            appId: "1:729011758610:web:50fbddf730d36a90969acb"
+        };
+
+        const COMPOUNDS = [
+            { id: 1, name: "メタン", url: "https://drive.google.com/uc?id=1qwuf3wdb9DWG1n6wwx_D3qTRjn3Ozt1S" },
+            { id: 2, name: "エタン", url: "https://drive.google.com/uc?id=1CrOzeJ4pHTSDreMKtZeWKLdP6POBxS7d" },
+            { id: 3, name: "プロパン", url: "https://drive.google.com/uc?id=1g3wFagtQJdkVIqgtU4Zzmhpy-F-0xGEH" },
+            { id: 4, name: "ブタン", url: "https://drive.google.com/uc?id=1GwZ2WI5EgpAev0fW497sDMdMIZQeWqhK" },
+            { id: 5, name: "ペンタン", url: "https://drive.google.com/uc?id=1G7-wExihdcCFunGU7hLcc_jHkG9xODYH" },
+            { id: 6, name: "ヘキサン", url: "https://drive.google.com/uc?id=1gYPQLybCXaHBVabLOIXvSuS2uMpBNE25" },
+            { id: 7, name: "ヘプタン", url: "https://drive.google.com/uc?id=1vP4aOetzSTxuY8mOuMcXE_SCCl0a6s9S" },
+            { id: 8, name: "オクタン", url: "https://drive.google.com/uc?id=1ceqcVpHUDIl9l5pYE0qs5T5fNx4rG5vz" },
+            { id: 9, name: "ノナン", url: "https://drive.google.com/uc?id=1yRa3bZWP4aQWTnYXva2ajI_GXKDnTYxj" },
+            { id: 10, name: "デカン", url: "https://drive.google.com/uc?id=1F7_wGXPKV4oSHUShlhAT5sijTxxowW3m" },
+            { id: 11, name: "2-メチルプロパン", url: "https://drive.google.com/uc?id=14K4Krkb2Dqf3DAm_-z4yXX4d4kWD0kG5" },
+            { id: 12, name: "2,2-ジメチルプロパン", url: "https://drive.google.com/uc?id=1-int_XRJBVsU0vIgZmpnXQY4P5N_osr9" },
+            { id: 13, name: "2-メチルブタン", url: "https://drive.google.com/uc?id=1GePbtEc1a1QjBKVFjeh41ABzw9lMjaKM" },
+            { id: 14, name: "クロロメタン", url: "https://drive.google.com/uc?id=1_pwuRWh5fZ2MLCivvrEClhYVbj3RiI2A" },
+            { id: 15, name: "シクロプロパン", url: "https://drive.google.com/uc?id=1cbUIx6RF5glFD2vv9tQdl_-EYuHRiThL" },
+            { id: 16, name: "シクロブタン", url: "https://drive.google.com/uc?id=1ndAdSMZ-2PW7cOepP4xR6od3kqa9cY0X" },
+            { id: 17, name: "シクロペンタン", url: "https://drive.google.com/uc?id=1mg5ToUTzj5HwpmaOTnYuZu55CY74zSLU" },
+            { id: 18, name: "シクロヘキサン", url: "https://drive.google.com/uc?id=1dSkKW-QhPlbZ1w9W0-O8nLo7RHcg6wDw" },
+            { id: 19, name: "1,3-ジブロモプロパン", url: "https://drive.google.com/uc?id=1VJ-CfAN2uishpm9wTZpCdwMsT-MST4h7" },
+            { id: 20, name: "エチレン", url: "https://drive.google.com/uc?id=1fHsWsXlPIvd3x3bbxm86IbWoJY-KtiZb" },
+            { id: 21, name: "プロペン", url: "https://drive.google.com/uc?id=18oEhAyKLlBY9dQ3M5_AjTw8VKa5a_cjZ" },
+            { id: 22, name: "1-ブテン", url: "https://drive.google.com/uc?id=1zzr3qIiIpeNwJMZgrG-RuQCQYu7s8d2b" },
+            { id: 23, name: "1-ペンテン", url: "https://drive.google.com/uc?id=1JpKeyNXgIv0RXc2VntrWJCeoem-DatqZ" },
+            { id: 24, name: "ポリエチレン", url: "https://drive.google.com/uc?id=1kOHmza4LS48n3v75odFXdvf-rv5mfb0z" },
+            { id: 25, name: "1,2-ジクロロエタン", url: "https://drive.google.com/uc?id=1S9bQgZdSX_lh4_CMkXMZU0_DdRGXImdi" },
+            { id: 26, name: "塩化ビニル", url: "https://drive.google.com/uc?id=1nb7fZllNwzaMehukxofoQvrZgJoZsrIg" },
+            { id: 27, name: "ポリ塩化ビニル", url: "https://drive.google.com/uc?id=1X-JfZD8UX8X1A7Z8JYfog8ySPLHaIrfb" },
+            { id: 28, name: "シクロヘキセン", url: "https://drive.google.com/uc?id=1G2di0KGHHwb7XrrujmtCx2LnKtqR3GKh" },
+            { id: 29, name: "1,2-ジブロモシクロヘキサン", url: "https://drive.google.com/uc?id=1mujXix4X9rXHMuHvmSDhHbyIlNTugv6a" },
+            { id: 30, name: "アセチレン", url: "https://drive.google.com/uc?id=1p9nsVX1Imr73OgdWf6-3WCxC66UidiQi" },
+            { id: 31, name: "プロピン", url: "https://drive.google.com/uc?id=1V14tJWEQqLjSmGm8QlSp_ln_HfgwwJju" },
+            { id: 32, name: "1-ブチン", url: "https://drive.google.com/uc?id=1wRQCUZqXTDcxvfr-mxGY_SBmD2bh-2gj" },
+            { id: 33, name: "2-ブチン", url: "https://drive.google.com/uc?id=1NEWWg-VwBzsPUJ2mdCwBVXTal7r-rnbz" },
+            { id: 34, name: "1,2-ジブロモエチレン", url: "https://drive.google.com/uc?id=1S-v3oD6zbcRE-TpF1jEyISQLi9aIrrFR" },
+            { id: 35, name: "1,1,2,2-テトラブロモエタン", url: "https://drive.google.com/uc?id=1IgA0UmN8wvQckAyrkIMCwkZrHodzL80E" },
+            { id: 36, name: "酢酸ビニル", url: "https://drive.google.com/uc?id=1YcDY-GFAoX7qufa0slHtWbWjcR6mqYzi" },
+            { id: 37, name: "ビニルアルコール", url: "https://drive.google.com/uc?id=1nks_uca294VAITXzfBGxXjOK1INht9Un" },
+            { id: 38, name: "メタノール", url: "https://drive.google.com/uc?id=14YA0CDzodiyBybgaXGxlKmdQ1A-AuFCB" },
+            { id: 39, name: "エタノール", url: "https://drive.google.com/uc?id=1UtJ86puivNGIpex6OvgwpMqMVWp-igkS" },
+            { id: 40, name: "1-プロパノール", url: "https://drive.google.com/uc?id=1dwbFMkOn1_oxQrOqs9eRa0t0cirVJu_k" },
+            { id: 41, name: "2-プロパノール", url: "https://drive.google.com/uc?id=1dYgIwT2xjSN9lkFrRo6_vhBztKZX5EgB" },
+            { id: 42, name: "1-ブタノール", url: "https://drive.google.com/uc?id=16Vxtx6QRUNafLi6gJUWiiYacNdgqJVY4" },
+            { id: 43, name: "2-ブタノール", url: "https://drive.google.com/uc?id=1fOD_Q9hUaL3s3jFiz6zjnjXpxnprW_KC" },
+            { id: 44, name: "2-メチル-2-プロパノール", url: "https://drive.google.com/uc?id=1Ks4mgkY_atH0HfpAX5mfU1LF8_iIAlZJ" },
+            { id: 45, name: "エチレングリコール(1,2-エタンジオール)", url: "https://drive.google.com/uc?id=1hDy-mm3_QV8aSBMrqW9468DMsaFsTVMf" },
+            { id: 46, name: "グリセリン(1,2,3-プロパントリオール)", url: "https://drive.google.com/uc?id=1GpIi5c0qqENnbS5I-L9xL20eG8mCmas6" },
+            { id: 47, name: "ジメチルエーテル", url: "https://drive.google.com/uc?id=18p2hLqqmn7HD_fvoqsfSQUQibXsPSYsk" },
+            { id: 48, name: "ジエチルエーテル", url: "https://drive.google.com/uc?id=1MCqTU1bxjop9Cx1N7DiZLYUQNUazgWgr" },
+            { id: 49, name: "ホルムアルデヒド", url: "https://drive.google.com/uc?id=17I2aAY0DaogMmdyz8RBB-xhGOEtNJ_2o" },
+            { id: 50, name: "アセトアルデヒド", url: "https://drive.google.com/uc?id=1MLRk9V36HeUz4ykQSluAOr7XKSt51OUw" },
+            { id: 51, name: "アセトン", url: "https://drive.google.com/uc?id=17VYiJStifeQi-z5l3f-vCJPF2KqDXO7T" },
+            { id: 52, name: "ジエチルケトン", url: "https://drive.google.com/uc?id=1FHisQ7G4_5NDVKOLjd5XEC33bbePpR5c" },
+            { id: 53, name: "エチルメチルケトン", url: "https://drive.google.com/uc?id=1af_8yBLA5W5jRzSiOhFNJ9kxWv46P0oY" },
+            { id: 54, name: "ギ酸", url: "https://drive.google.com/uc?id=1uOTbTvfnp_ku5v2aZg9sEqex-VnubXXP" },
+            { id: 55, name: "酢酸", url: "https://drive.google.com/uc?id=1qpRtUvwn2jFER_b6FzTbNO379Lr5pBTJ" },
+            { id: 56, name: "プロピオン酸", url: "https://drive.google.com/uc?id=1xc3eo0TcClPmZixn9CYsuwYTZ4PUGLGh" },
+            { id: 57, name: "シュウ酸", url: "https://drive.google.com/uc?id=1jrCSgMRlDQykc41WeeRkr4zu2iMxzPwz" },
+            { id: 58, name: "フマル酸", url: "https://drive.google.com/uc?id=1-ncB_GUXGdBWBRZniHzLule8Xk8SLzgn" },
+            { id: 59, name: "マレイン酸", url: "https://drive.google.com/uc?id=1a9FO6e0OUXb6K3B5ZYWAuBdgnc9RadeU" },
+            { id: 60, name: "ギ酸メチル", url: "https://drive.google.com/uc?id=1oAflkadU9EOIhG8zoYQ4JgZ7mH8s2N6e" },
+            { id: 61, name: "ギ酸エチル", url: "https://drive.google.com/uc?id=1vlTBTgEduTZngEsoJjkwnjRHPJzyfJPs" },
+            { id: 62, name: "酢酸メチル", url: "https://drive.google.com/uc?id=1Ff-uoS4SnqS6I-Vz0bcKAguRVP6jaAB7" },
+            { id: 63, name: "酢酸エチル", url: "https://drive.google.com/uc?id=13dSmxVaIhnBIRuLJQvi_-BcY32fCqID5" },
+            { id: 64, name: "ニトログリセリン", url: "https://drive.google.com/uc?id=1mtAlD4eKCGXVmgEF86tlrSIS9MqCbH0S" },
+            { id: 65, name: "無水酢酸", url: "https://drive.google.com/uc?id=1j8fQ9j_EGZ5FEv9IMgSIDrLaRbIAbaEh" },
+            { id: 66, name: "無水マレイン酸", url: "https://drive.google.com/uc?id=1pSYdqFdPEolimAhXq40f9DOg9IIhyS2M" },
+            { id: 67, name: "ステアリン酸", url: "https://drive.google.com/uc?id=1ol0tKW88zkow04y6j4Q9rxoO23xRCcik" },
+            { id: 68, name: "オレイン酸", url: "https://drive.google.com/uc?id=18wtdKAoZ2APZTUIZ73OR-6v1BA5jhZf8" },
+            { id: 69, name: "リノール酸", url: "https://drive.google.com/uc?id=1uo6YMqjLTTuNiv157UeYJnCJqetoui0U" },
+            { id: 70, name: "リノレン酸", url: "https://drive.google.com/uc?id=1n-PtMeWqPcqWm-VIZeKPX73Fr_7-kKsP" },
+            { id: 71, name: "パルミチン酸", url: "https://drive.google.com/uc?id=1em_wSlTI1Yqlb0v2_6CsHbsoubcoPsfK" },
+            { id: 72, name: "トルエン", url: "https://drive.google.com/uc?id=1VDsxFdP2H0gENGLVaQKNI82J_TPW999t" },
+            { id: 73, name: "o-キシレン", url: "https://drive.google.com/uc?id=13XA16_FcKMwkAsIKZLNK66t0Gtncan5b" },
+            { id: 74, name: "m-キシレン", url: "https://drive.google.com/uc?id=1lLEnHVhuPbhBTy_LSsNmwq-M63GK4vX6" },
+            { id: 75, name: "p-キシレン", url: "https://drive.google.com/uc?id=1wtj8VfQClmn3oSLXSFbxJ80mVohAcpDY" },
+            { id: 76, name: "ナフタレン", url: "https://drive.google.com/uc?id=1ucWCMs6PLxxHv1gHf0jay4jQ19JV1JJp" },
+            { id: 77, name: "エチルベンゼン", url: "https://drive.google.com/uc?id=1vwwmjs8pot9IgWliT9Z_9E3Iq0qT-Q6c" },
+            { id: 78, name: "スチレン", url: "https://drive.google.com/uc?id=1Y77s0YNIcO0A9VlgiE12Mz09WmkYIeph" },
+            { id: 79, name: "アントラセン", url: "https://drive.google.com/uc?id=1VpuN8v9dWYNp6SBFjXQJV2lz3P74HuPp" },
+            { id: 80, name: "ニトロベンゼン", url: "https://drive.google.com/uc?id=1AorSLuRzZVukm3tu9xN3ifFg3jlrNkxL" },
+            { id: 81, name: "ベンゼンスルホン酸", url: "https://drive.google.com/uc?id=1ZQ-tGPuv-YxAcmBzmVe4YBuF_DQUCejW" },
+            { id: 82, name: "ベンゼンスルホン酸ナトリウム", url: "https://drive.google.com/uc?id=1fDP2ZMIt-Nfy9-c6YkScUnahe87FzB6C" },
+            { id: 83, name: "クロロベンゼン", url: "https://drive.google.com/uc?id=1-PC9yIEf9xKySuteoMBHyMlwYKIjlmb-" },
+            { id: 84, name: "ブロモベンゼン", url: "https://drive.google.com/uc?id=1chwCVv0x0nx3Ljs2Us9C6do2z4s6qc_-" },
+            { id: 85, name: "フェノール", url: "https://drive.google.com/uc?id=1vvSIPoASaLA1YnhHKKhqm4NpyewSEWyI" },
+            { id: 86, name: "o-クレゾール", url: "https://drive.google.com/uc?id=1xBbpXrglhh1jFwxhcf5jcLn2GKKf1bw9" },
+            { id: 87, name: "m-クレゾール", url: "https://drive.google.com/uc?id=1YbprW360oG3VX9bjNl1n6t8eJ6BtFX43" },
+            { id: 88, name: "p-クレゾール", url: "https://drive.google.com/uc?id=1KmhaqmQqwjj62u5I2Bces9WCDDZW5JnR" },
+            { id: 89, name: "2-ナフトール", url: "https://drive.google.com/uc?id=1dxxG5zkCEuhCVcC5Iq9neiMOHK10HrxJ" },
+            { id: 90, name: "1-ナフトール", url: "https://drive.google.com/uc?id=1zkB1-129ywkhlhCfCqPCkP01jpI3Jkts" },
+            { id: 91, name: "サリチル酸", url: "https://drive.google.com/uc?id=1bLmAsLWpBX1bU3HDLi2SPP3PkdRbaZL3" },
+            { id: 92, name: "ナトリウムフェノキシド", url: "https://drive.google.com/uc?id=1299ipfDqC7IsoWjk3ZiiY6tkyJV3FjVF" },
+            { id: 93, name: "2,4,6-トリブロモフェノール", url: "https://drive.google.com/uc?id=1dymAxReQn18wHoxFjxDKev6KevOxikk2" },
+            { id: 94, name: "ピクリン酸(2,4,6-トリニトロフェノール)", url: "https://drive.google.com/uc?id=14Io2aW8KqkzSePTbDBzda1qbSHAd8FvP" },
+            { id: 95, name: "安息香酸", url: "https://drive.google.com/uc?id=1hJTiqbYOQ6eXjxzpuJIAiDXAlLBLi9ev" },
+            { id: 96, name: "フタル酸", url: "https://drive.google.com/uc?id=1WranYLAIfl62BrtCu53ZjDwLNjbe0YXF" },
+            { id: 97, name: "テレフタル酸", url: "https://drive.google.com/uc?id=1KWv5mdo3MqNDhAocDnimV_28zHaHLO4-" },
+            { id: 98, name: "ベンズアルデヒド", url: "https://drive.google.com/uc?id=1E9CXpDC8Fama-B_cEw-IyIBU99cR8HyM" },
+            { id: 99, name: "無水フタル酸", url: "https://drive.google.com/uc?id=1SbkDLX3iQ1v5BzRETv9-r3T74TtdwOhP" },
+            { id: 100, name: "アセチルサリチル酸", url: "https://drive.google.com/uc?id=1Vo4ZLWuvX7KJJ6M4in5yK3LhdRRvvg7y" },
+            { id: 101, name: "サリチル酸メチル", url: "https://drive.google.com/uc?id=1lOIv8i5j7hUPUanbHYppuFAgV2c3E8TW" },
+            { id: 102, name: "アニリン", url: "https://drive.google.com/uc?id=16pBQ1mbe6DDQGqRYn6oB8qXfcNOQfMzH" },
+            { id: 103, name: "アニリン塩酸塩", url: "https://drive.google.com/uc?id=1pK4QTYn-izGgWNnKykwUdAXq4Ui-q9m7" },
+            { id: 104, name: "アセトアニリド", url: "https://drive.google.com/uc?id=1stULQIdzgq3-dtGXJTRxqx_zesQDqNlJ" },
+            { id: 105, name: "塩化ベンゼンジアゾニウム", url: "https://drive.google.com/uc?id=1pI5k4uI28IDgWXVi7B5N7dEW08IumdO5" },
+            { id: 106, name: "p-ヒドロキシアゾベンゼン", url: "https://drive.google.com/uc?id=1XaGFiK5PENRVqBlaC69e3G3e_OMnRAR7" },
+            { id: 107, name: "1-フェニルアゾ-2-ナフトール", url: "https://drive.google.com/uc?id=1gMGVSqKspWzDedA0SXghz2c3inyg9djj" },
+            { id: 108, name: "2,4,6-トリニトロトルエン", url: "https://drive.google.com/uc?id=1N_rWbSkQyej74oE8op46m--FhDZMqQb9" },
+            { id: 109, name: "クメン", url: "https://drive.google.com/uc?id=1GAvORrAFlGV5oYQmt153C6Y4-QpEexAq" },
+            { id: 110, name: "クメンヒドロペルオキシド", url: "https://drive.google.com/uc?id=1Uk5Ql8uUKKbf1gJzhN9coKLJBJq3anN6" },
+            { id: 111, name: "ベンゼン", url: "https://drive.google.com/uc?id=1z7IXQ5IFp5TkVQgSIr6o5r5_S_W-Ozp9" }
+        ];
+
+        // --- Firebase Initialization ---
+        const app = window.firebaseModules.initializeApp(firebaseConfig);
+        const auth = window.firebaseModules.getAuth(app);
+        const db = window.firebaseModules.getFirestore(app);
+        
+        // --- Utils ---
+        const RANKS = [
+            { threshold: 0, name: "ビーカー洗い", color: "bg-gray-400" },
+            { threshold: 1, name: "見習い学生", color: "bg-blue-400" },
+            { threshold: 5, name: "実験助手", color: "bg-green-400" },
+            { threshold: 10, name: "研究員", color: "bg-teal-500" },
+            { threshold: 20, name: "主任研究員", color: "bg-indigo-500" },
+            { threshold: 40, name: "博士", color: "bg-purple-500" },
+            { threshold: 70, name: "教授", color: "bg-pink-500" },
+            { threshold: 100, name: "有機化学マスター", color: "bg-yellow-500" }
+        ];
+
+        const getRank = (stamps) => {
+            return RANKS.slice().reverse().find(r => stamps >= r.threshold) || RANKS[0];
+        };
+
+        const shuffleArray = (array) => {
+            let currentIndex = array.length, randomIndex;
+            while (currentIndex != 0) {
+                randomIndex = Math.floor(Math.random() * currentIndex);
+                currentIndex--;
+                [array[currentIndex], array[randomIndex]] = [array[randomIndex], array[currentIndex]];
+            }
+            return array;
+        };
+
+        // --- Components ---
+
+        const Loading = () => (
+            <div className="flex justify-center items-center h-screen bg-green-50">
+                <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-green-600"></div>
+            </div>
+        );
+
+        // --- Main App Component ---
+
+        const App = () => {
+            const [user, setUser] = useState(null);
+            const [userData, setUserData] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const [view, setView] = useState("dashboard"); // dashboard, drill, test, teacher
+            const [activeSession, setActiveSession] = useState(null);
+
+            // Auth Listener
+            useEffect(() => {
+                const unsubscribe = window.firebaseModules.onAuthStateChanged(auth, async (currentUser) => {
+                    setUser(currentUser);
+                    if (currentUser) {
+                        const userRef = window.firebaseModules.doc(db, "users", currentUser.uid);
+                        const userSnap = await window.firebaseModules.getDoc(userRef);
+                        if (userSnap.exists()) {
+                            setUserData(userSnap.data());
+                        } else {
+                            // New user, wait for registration modal
+                            setUserData(null);
+                        }
+                    } else {
+                        setUserData(null);
+                    }
+                    setLoading(false);
+                });
+                return () => unsubscribe();
+            }, []);
+
+            // Test Session Listener (Active Tests)
+            useEffect(() => {
+                if (!userData || userData.role !== 'student') return;
+                
+                const q = window.firebaseModules.query(
+                    window.firebaseModules.collection(db, "test_sessions"),
+                    window.firebaseModules.where("status", "in", ["active", "standby"]),
+                    window.firebaseModules.where("targetClasses", "array-contains", userData.classId)
+                );
+
+                const unsubscribe = window.firebaseModules.onSnapshot(q, (snapshot) => {
+                    if (!snapshot.empty) {
+                        const session = snapshot.docs[0].data();
+                        session.id = snapshot.docs[0].id;
+                        setActiveSession(session);
+                    } else {
+                        setActiveSession(null);
+                    }
+                });
+                return () => unsubscribe();
+            }, [userData]);
+
+            const handleLogout = () => {
+                window.firebaseModules.signOut(auth);
+                setView("dashboard");
+            };
+
+            const handleRegister = async (name, classId, isTeacher) => {
+                const role = isTeacher ? 'teacher' : 'student';
+                const data = {
+                    uid: user.uid,
+                    email: user.email,
+                    name,
+                    classId,
+                    role,
+                    stamps: 0,
+                    drillStats: { attempts: 0, passes: 0 },
+                    createdAt: window.firebaseModules.serverTimestamp()
+                };
+                await window.firebaseModules.setDoc(window.firebaseModules.doc(db, "users", user.uid), data);
+                setUserData(data);
+            };
+
+            if (loading) return <Loading />;
+
+            if (!user) {
+                return <LoginScreen />;
+            }
+
+            if (!userData) {
+                return <RegistrationScreen onRegister={handleRegister} defaultName={user.displayName} />;
+            }
+
+            // Router
+            if (view === "drill") return <DrillGame user={userData} onBack={() => setView("dashboard")} />;
+            if (view === "test") return <TestRunner user={userData} session={activeSession} onBack={() => setView("dashboard")} />;
+            if (view === "teacher" && userData.role === 'teacher') return <TeacherDashboard user={userData} onBack={() => setView("dashboard")} />;
+
+            // Dashboard
+            return (
+                <div className="min-h-screen bg-green-50 p-4">
+                    <header className="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm mb-6 max-w-4xl mx-auto">
+                        <div>
+                            <h1 className="text-xl font-bold text-gray-800">Organic Chem Master</h1>
+                            <p className="text-sm text-gray-500">{userData.classId} {userData.name} ({getRank(userData.stamps).name})</p>
+                        </div>
+                        <div className="flex gap-2">
+                             {userData.role === 'teacher' && (
+                                <button onClick={() => setView("teacher")} className="bg-purple-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-purple-700 transition">
+                                    教員メニュー
+                                </button>
+                            )}
+                            <button onClick={handleLogout} className="text-gray-500 hover:text-red-500 px-3 py-2">
+                                ログアウト
+                            </button>
+                        </div>
+                    </header>
+
+                    <main className="max-w-4xl mx-auto grid md:grid-cols-2 gap-6">
+                        {/* Stamp Card */}
+                        <div className="bg-white p-6 rounded-2xl shadow-lg">
+                            <h2 className="text-lg font-bold text-gray-700 mb-4 flex items-center">
+                                <span className="mr-2">🏆</span> スタンプカード
+                            </h2>
+                            <div className="flex flex-wrap gap-2 mb-4 h-48 overflow-y-auto content-start p-2 bg-gray-50 rounded-lg">
+                                {[...Array(Math.max(20, userData.stamps + (5 - userData.stamps % 5)))].map((_, i) => (
+                                    <div key={i} className={`w-10 h-10 rounded-full flex items-center justify-center border-2 
+                                        ${i < userData.stamps ? 'border-yellow-400 bg-yellow-100 text-yellow-600' : 'border-gray-200 text-gray-300'}`}>
+                                        {i < userData.stamps ? '★' : i + 1}
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="flex items-center justify-between">
+                                <div className={`px-3 py-1 rounded-full text-white text-sm font-bold ${getRank(userData.stamps).color}`}>
+                                    Rank: {getRank(userData.stamps).name}
+                                </div>
+                                <div className="text-sm text-gray-500">
+                                    合計スタンプ: {userData.stamps}個
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Actions */}
+                        <div className="space-y-4">
+                            {/* Drill Button */}
+                            <button 
+                                onClick={() => setView("drill")}
+                                className="w-full bg-gradient-to-r from-green-400 to-green-600 hover:from-green-500 hover:to-green-700 text-white p-6 rounded-2xl shadow-lg transform transition hover:scale-105 flex flex-col items-center justify-center"
+                            >
+                                <span className="text-3xl mb-2">🧪</span>
+                                <span className="text-2xl font-bold">演習モード</span>
+                                <span className="text-sm opacity-90">ランダム10問に挑戦！スタンプGET</span>
+                            </button>
+
+                            {/* Test Button */}
+                            <button 
+                                onClick={() => activeSession && setView("test")}
+                                disabled={!activeSession}
+                                className={`w-full p-6 rounded-2xl shadow-lg transform transition flex flex-col items-center justify-center
+                                    ${activeSession 
+                                        ? 'bg-gradient-to-r from-red-400 to-red-600 text-white hover:scale-105 cursor-pointer animate-pulse' 
+                                        : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
+                            >
+                                <span className="text-3xl mb-2">📝</span>
+                                <span className="text-2xl font-bold">テストモード</span>
+                                <span className="text-sm opacity-90">
+                                    {activeSession ? "テストが実施されています！" : "現在実施されているテストはありません"}
+                                </span>
+                            </button>
+                            
+                            {/* Stats */}
+                            <div className="bg-white p-4 rounded-xl shadow-sm">
+                                <h3 className="text-sm font-bold text-gray-500 mb-2">学習状況</h3>
+                                <div className="flex justify-between text-sm">
+                                    <span>演習回数: {userData.drillStats?.attempts || 0}回</span>
+                                    <span>合格率: {userData.drillStats?.attempts ? Math.round((userData.drillStats.passes / userData.drillStats.attempts) * 100) : 0}%</span>
+                                </div>
+                            </div>
+                        </div>
+                    </main>
+                </div>
+            );
+        };
+
+        // --- Sub Components ---
+
+        const LoginScreen = () => {
+            const handleGoogleLogin = async () => {
+                const provider = new window.firebaseModules.GoogleAuthProvider();
+                try {
+                    await window.firebaseModules.signInWithPopup(auth, provider);
+                } catch (error) {
+                    console.error("Login failed", error);
+                    let msg = "ログインに失敗しました。";
+                    if (error.code === 'auth/configuration-not-found') {
+                        msg += "\n【エラー原因】Firebaseコンソールで「Googleログイン」が有効になっていません。\nAuthentication > Sign-in method でGoogleを有効にしてください。";
+                    } else if (error.code === 'auth/unauthorized-domain') {
+                        msg += "\n【エラー原因】ドメインが許可されていません。\nAuthentication > Settings > Authorized domains に現在のドメイン（例: netlify.appなど）を追加してください。";
+                    } else if (error.code === 'auth/popup-blocked') {
+                        msg += "\n【エラー原因】ポップアップがブロックされました。\nブラウザの設定で許可するか、このページをGoogleサイトに埋め込まずに直接開いてください。";
+                    }
+                    alert(msg);
+                }
+            };
+
+            return (
+                <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-b from-green-50 to-green-100 p-4">
+                    <div className="bg-white p-8 rounded-3xl shadow-xl max-w-md w-full text-center">
+                        <div className="text-6xl mb-4">⚗️</div>
+                        <h1 className="text-3xl font-bold text-gray-800 mb-2">Organic Chem Master</h1>
+                        <p className="text-gray-500 mb-8">有機化合物の構造式をマスターしよう</p>
+                        <button 
+                            onClick={handleGoogleLogin}
+                            className="w-full bg-white border border-gray-300 text-gray-700 font-bold py-3 px-4 rounded-xl shadow-sm hover:bg-gray-50 flex items-center justify-center transition"
+                        >
+                            <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-6 h-6 mr-2" />
+                            Googleでログイン
+                        </button>
+                        <p className="text-xs text-red-400 mt-4">
+                            ※重要: このアプリはGoogleサイトに埋め込まず、<br/>
+                            別タブで開いて利用してください。
+                        </p>
+                    </div>
+                </div>
+            );
+        };
+
+        const RegistrationScreen = ({ onRegister, defaultName }) => {
+            const [name, setName] = useState(defaultName || "");
+            const [classId, setClassId] = useState("3-A");
+            const [isTeacher, setIsTeacher] = useState(false);
+            const [password, setPassword] = useState("");
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                if (!name) return alert("名前を入力してください");
+                if (isTeacher && password !== "admin123") return alert("教員用パスワードが違います");
+                onRegister(name, classId, isTeacher);
+            };
+
+            return (
+                <div className="min-h-screen flex flex-col items-center justify-center bg-green-50 p-4">
+                    <div className="bg-white p-8 rounded-3xl shadow-xl max-w-md w-full">
+                        <h2 className="text-2xl font-bold text-center mb-6">ユーザー登録</h2>
+                        <form onSubmit={handleSubmit} className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-bold text-gray-700 mb-1">クラス</label>
+                                <select 
+                                    value={classId} 
+                                    onChange={(e) => setClassId(e.target.value)}
+                                    className="w-full p-2 border rounded-lg"
+                                >
+                                    {["3-A", "3-B", "3-C", "3-D", "3-E", "教員"].map(c => <option key={c} value={c}>{c}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-bold text-gray-700 mb-1">氏名</label>
+                                <input 
+                                    type="text" 
+                                    value={name} 
+                                    onChange={(e) => setName(e.target.value)}
+                                    className="w-full p-2 border rounded-lg"
+                                    placeholder="山田 太郎"
+                                />
+                            </div>
+                            
+                            <div className="pt-4 border-t">
+                                <label className="flex items-center space-x-2 text-sm text-gray-600">
+                                    <input type="checkbox" checked={isTeacher} onChange={(e) => setIsTeacher(e.target.checked)} />
+                                    <span>教員として登録する</span>
+                                </label>
+                            </div>
+                            
+                            {isTeacher && (
+                                <div>
+                                    <label className="block text-sm font-bold text-gray-700 mb-1">管理者パスワード</label>
+                                    <input 
+                                        type="password" 
+                                        value={password} 
+                                        onChange={(e) => setPassword(e.target.value)}
+                                        className="w-full p-2 border rounded-lg"
+                                        placeholder="パスワードを入力"
+                                    />
+                                </div>
+                            )}
+
+                            <button type="submit" className="w-full bg-green-500 text-white font-bold py-3 rounded-xl hover:bg-green-600 transition">
+                                登録して開始
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- Game Logic (Drill & Test) ---
+
+        const Quiz = ({ mode, questions, timeLimit, onFinish }) => {
+            const [currentIdx, setCurrentIdx] = useState(0);
+            const [score, setScore] = useState(0);
+            const [timeLeft, setTimeLeft] = useState(timeLimit);
+            const [selected, setSelected] = useState(null); // null, correct, wrong
+            const [showResult, setShowResult] = useState(false);
+            const [answers, setAnswers] = useState([]); // Array of boolean
+            const [startTime] = useState(Date.now());
+
+            const timerRef = useRef(null);
+
+            useEffect(() => {
+                if (showResult) return;
+                timerRef.current = setInterval(() => {
+                    setTimeLeft((prev) => {
+                        if (prev <= 1) {
+                            clearInterval(timerRef.current);
+                            finishQuiz(score, answers); // Time up logic
+                            return 0;
+                        }
+                        return prev - 1;
+                    });
+                }, 1000);
+                return () => clearInterval(timerRef.current);
+            }, [showResult, score, answers]);
+
+            const finishQuiz = (finalScore, finalAnswers) => {
+                setShowResult(true);
+                const timeTaken = timeLimit - (timeLeft > 0 ? timeLeft : 0); // Approx
+                onFinish({ score: finalScore, timeTaken: (Date.now() - startTime) / 1000, answers: finalAnswers });
+            };
+
+            const handleAnswer = (choice) => {
+                if (selected) return; // Prevent double click
+
+                const isCorrect = choice.id === questions[currentIdx].correct.id;
+                setSelected(isCorrect ? 'correct' : 'wrong');
+                
+                const newScore = isCorrect ? score + 1 : score;
+                const newAnswers = [...answers, isCorrect];
+                setScore(newScore);
+                setAnswers(newAnswers);
+
+                // Wait a bit then next question
+                setTimeout(() => {
+                    if (currentIdx + 1 < questions.length) {
+                        setCurrentIdx(currentIdx + 1);
+                        setSelected(null);
+                    } else {
+                        finishQuiz(newScore, newAnswers);
+                    }
+                }, 600); // 0.6s delay
+            };
+
+            const q = questions[currentIdx];
+            if (showResult) return <div className="text-center p-10 font-bold text-2xl">集計中...</div>;
+
+            return (
+                <div className={`max-w-2xl mx-auto bg-white rounded-3xl shadow-xl overflow-hidden ${selected === 'correct' ? 'correct-flash' : selected === 'wrong' ? 'wrong-flash' : ''}`}>
+                    {/* Header */}
+                    <div className="bg-gray-100 p-4 flex justify-between items-center">
+                        <div className="font-bold text-gray-600">Q.{currentIdx + 1} / {questions.length}</div>
+                        <div className={`font-mono text-xl font-bold ${timeLeft < 10 ? 'text-red-500 animate-pulse' : 'text-gray-700'}`}>
+                            ⏱ {timeLeft}s
+                        </div>
+                    </div>
+
+                    {/* Question Area */}
+                    <div className="p-6 text-center">
+                        {q.type === 'name-to-struct' ? (
+                            <div className="mb-6">
+                                <h2 className="text-sm text-gray-500 mb-2">この構造式の名称は？</h2>
+                                <div className="flex justify-center">
+                                    <div className="bg-white border-2 border-gray-200 rounded-xl p-4 w-64 h-48 flex items-center justify-center">
+                                         <img src={q.correct.url} alt="structure" className="max-w-full max-h-full object-contain" onError={(e)=>{e.target.src='https://placehold.co/200?text=No+Image'}} />
+                                    </div>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="mb-6">
+                                <h2 className="text-sm text-gray-500 mb-2">次の化合物の構造式は？</h2>
+                                <h1 className="text-3xl font-bold text-gray-800 my-8">{q.correct.name}</h1>
+                            </div>
+                        )}
+
+                        {/* Choices */}
+                        <div className="grid grid-cols-2 gap-4">
+                            {q.choices.map((choice, i) => (
+                                <button
+                                    key={i}
+                                    onClick={() => handleAnswer(choice)}
+                                    disabled={selected !== null}
+                                    className={`p-4 rounded-xl border-2 transition transform hover:scale-105 active:scale-95 flex items-center justify-center min-h-[80px]
+                                        ${selected === null ? 'border-gray-200 hover:border-blue-400 hover:bg-blue-50' : ''}
+                                        ${selected !== null && choice.id === q.correct.id ? 'bg-green-100 border-green-500 ring-2 ring-green-300' : ''}
+                                        ${selected === 'wrong' && choice.id !== q.correct.id ? 'opacity-50' : ''}
+                                    `}
+                                >
+                                    {q.type === 'name-to-struct' ? (
+                                        <span className="font-bold text-lg">{choice.name}</span>
+                                    ) : (
+                                        <img src={choice.url} alt="choice" className="h-24 w-full object-contain" onError={(e)=>{e.target.src='https://placehold.co/100?text=?'}} />
+                                    )}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const generateQuestions = (count) => {
+            const questions = [];
+            const all = shuffleArray([...COMPOUNDS]);
+            
+            for (let i = 0; i < count; i++) {
+                const correct = all[i];
+                // Distractors: pick 3 others randomly
+                const others = shuffleArray(COMPOUNDS.filter(c => c.id !== correct.id)).slice(0, 3);
+                const choices = shuffleArray([correct, ...others]);
+                
+                // Randomly decide type: 0 = Name->Struct (Show Image, Pick Name), 1 = Struct->Name (Show Name, Pick Image)
+                // *Actually, the prompt says:*
+                // Pattern A: Show Name -> Select 4 Structure Images
+                // Pattern B: Show Structure Image -> Select 4 Names
+                // Let's implement that.
+                
+                // type 'name-to-struct': Show Image (correct.url), choices are Names (choice.name)
+                // type 'struct-to-name': Show Name (correct.name), choices are Images (choice.url)
+                // Wait, typically "Name to Struct" means Question is Name.
+                // Let's align with common sense:
+                // Type A: Question is Name. Choices are Images.
+                // Type B: Question is Image. Choices are Names.
+                
+                const type = Math.random() > 0.5 ? 'name-to-struct' : 'struct-to-name'; 
+                // Correction:
+                // name-to-struct: Q: Image, A: Name (Identify structure)
+                // struct-to-name: Q: Name, A: Image (Find structure)
+                
+                questions.push({
+                    correct,
+                    choices,
+                    type: Math.random() > 0.5 ? 'name-to-struct' : 'struct-to-name'
+                });
+            }
+            return questions;
+        };
+
+        const DrillGame = ({ user, onBack }) => {
+            const [state, setState] = useState('ready'); // ready, playing, result
+            const [questions, setQuestions] = useState([]);
+            const [result, setResult] = useState(null);
+
+            const startDrill = () => {
+                setQuestions(generateQuestions(10));
+                setState('playing');
+            };
+
+            const handleFinish = async (res) => {
+                const passed = res.score >= 8;
+                setResult({ ...res, passed });
+                setState('result');
+
+                // Update Stats
+                const userRef = window.firebaseModules.doc(db, "users", user.uid);
+                const updates = {
+                    "drillStats.attempts": window.firebaseModules.increment(1),
+                    "drillStats.passes": passed ? window.firebaseModules.increment(1) : window.firebaseModules.increment(0)
+                };
+                if (passed) {
+                    updates.stamps = window.firebaseModules.increment(1);
+                }
+                await window.firebaseModules.updateDoc(userRef, updates);
+            };
+
+            return (
+                <div className="min-h-screen bg-green-50 p-4">
+                    {state === 'ready' && (
+                        <div className="max-w-md mx-auto mt-20 text-center">
+                            <h1 className="text-3xl font-bold mb-8">演習モード</h1>
+                            <div className="bg-white p-8 rounded-2xl shadow-lg mb-8">
+                                <p className="text-gray-600 mb-4">10問中8問正解で合格！<br/>スタンプをゲットしよう。</p>
+                                <p className="text-sm text-gray-400">制限時間: 60秒</p>
+                            </div>
+                            <div className="space-y-4">
+                                <button onClick={startDrill} className="w-full bg-green-500 text-white font-bold py-4 rounded-xl shadow-lg hover:bg-green-600 transition text-xl">
+                                    スタート！
+                                </button>
+                                <button onClick={onBack} className="text-gray-500 hover:underline">戻る</button>
+                            </div>
+                        </div>
+                    )}
+                    
+                    {state === 'playing' && (
+                        <Quiz mode="drill" questions={questions} timeLimit={60} onFinish={handleFinish} />
+                    )}
+
+                    {state === 'result' && (
+                        <div className="max-w-md mx-auto mt-20 text-center fade-in">
+                            <div className="bg-white p-8 rounded-3xl shadow-xl">
+                                {result.passed ? (
+                                    <div className="mb-6">
+                                        <div className="text-6xl mb-4 stamp-animation">💮</div>
+                                        <h2 className="text-2xl font-bold text-green-600">合格！</h2>
+                                        <p className="text-gray-500">スタンプGET!</p>
+                                    </div>
+                                ) : (
+                                    <div className="mb-6">
+                                        <div className="text-6xl mb-4">💪</div>
+                                        <h2 className="text-2xl font-bold text-gray-700">残念...</h2>
+                                        <p className="text-gray-500">あと{8 - result.score}問で合格でした</p>
+                                    </div>
+                                )}
+                                
+                                <div className="text-4xl font-bold mb-2">{result.score} <span className="text-lg text-gray-400">/ 10点</span></div>
+                                <div className="text-sm text-gray-400 mb-8">タイム: {result.timeTaken.toFixed(1)}秒</div>
+
+                                <button onClick={onBack} className="w-full bg-gray-800 text-white font-bold py-3 rounded-xl hover:bg-gray-900 transition">
+                                    メニューに戻る
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const TestRunner = ({ user, session, onBack }) => {
+            const [status, setStatus] = useState('standby'); // standby, active, finished
+            const [questions, setQuestions] = useState([]);
+            const [rank, setRank] = useState(null);
+            
+            // Sync status with session
+            useEffect(() => {
+                if (!session) return;
+                
+                if (session.status === 'active' && status === 'standby') {
+                    // Reconstruct questions from IDs
+                    const sessionQs = session.questionSet.map(qData => {
+                        const correct = COMPOUNDS.find(c => c.id === qData.correctId);
+                        const choices = qData.choiceIds.map(id => COMPOUNDS.find(c => c.id === id));
+                        return { correct, choices, type: qData.type };
+                    });
+                    setQuestions(sessionQs);
+                    setStatus('active');
+                } else if (session.status === 'closed') {
+                    onBack();
+                }
+            }, [session, status]);
+
+            const handleFinish = async (res) => {
+                setStatus('finished');
+                // Submit Result
+                await window.firebaseModules.setDoc(window.firebaseModules.doc(db, "test_results", `${session.id}_${user.uid}`), {
+                    sessionId: session.id,
+                    uid: user.uid,
+                    name: user.name,
+                    classId: user.classId,
+                    score: res.score,
+                    timeTaken: res.timeTaken,
+                    timestamp: window.firebaseModules.serverTimestamp()
+                });
+
+                // Listen for Ranking
+                const q = window.firebaseModules.query(
+                    window.firebaseModules.collection(db, "test_results"), 
+                    window.firebaseModules.where("sessionId", "==", session.id)
+                );
+                
+                // Realtime ranking updates
+                const unsubscribe = window.firebaseModules.onSnapshot(q, (snap) => {
+                    const results = snap.docs.map(d => d.data());
+                    // Sort: Score DESC, Time ASC
+                    results.sort((a, b) => b.score - a.score || a.timeTaken - b.timeTaken);
+                    const myRank = results.findIndex(r => r.uid === user.uid) + 1;
+                    setRank(myRank);
+                });
+            };
+
+            return (
+                <div className="min-h-screen bg-indigo-50 p-4">
+                     {status === 'standby' && (
+                        <div className="flex flex-col items-center justify-center h-[80vh] text-center">
+                            <div className="animate-pulse text-6xl mb-4">📡</div>
+                            <h2 className="text-2xl font-bold text-indigo-900 mb-2">先生の合図を待っています...</h2>
+                            <p className="text-indigo-600">{session.name}</p>
+                            <p className="text-sm text-indigo-400 mt-8">画面を閉じずにお待ちください</p>
+                            <button onClick={onBack} className="mt-8 text-gray-400 underline">退出</button>
+                        </div>
+                    )}
+
+                    {status === 'active' && (
+                        <Quiz mode="test" questions={questions} timeLimit={60} onFinish={handleFinish} />
+                    )}
+
+                    {status === 'finished' && (
+                        <div className="max-w-md mx-auto mt-20 text-center bg-white p-8 rounded-3xl shadow-xl">
+                            <h2 className="text-2xl font-bold mb-4">テスト終了！</h2>
+                            <p className="text-gray-500 mb-8">お疲れ様でした。結果を集計中です。</p>
+                            
+                            {rank ? (
+                                <div className="fade-in">
+                                    <div className="text-sm text-gray-400">現在の順位</div>
+                                    <div className="text-5xl font-bold text-indigo-600 mb-2">{rank}位</div>
+                                    <div className="text-xs text-gray-400">クラス内ランキング</div>
+                                </div>
+                            ) : (
+                                <div className="animate-pulse text-gray-400">集計中...</div>
+                            )}
+
+                            <button onClick={onBack} className="mt-8 w-full bg-gray-200 text-gray-700 py-3 rounded-xl hover:bg-gray-300">
+                                戻る
+                            </button>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const TeacherDashboard = ({ user, onBack }) => {
+            const [tab, setTab] = useState('tests'); // tests, data, students
+            const [sessions, setSessions] = useState([]);
+            const [activeTestId, setActiveTestId] = useState(null);
+            
+            // Load Sessions
+            useEffect(() => {
+                const q = window.firebaseModules.query(
+                    window.firebaseModules.collection(db, "test_sessions"),
+                    window.firebaseModules.orderBy("startTime", "desc")
+                );
+                const unsub = window.firebaseModules.onSnapshot(q, (snap) => {
+                    setSessions(snap.docs.map(d => ({id: d.id, ...d.data()})));
+                });
+                return () => unsub();
+            }, []);
+
+            const createSession = async () => {
+                const name = prompt("テスト名を入力してください（例：1学期中間テスト）");
+                if (!name) return;
+                
+                // Generate consistent questions for everyone
+                const qs = generateQuestions(10).map(q => ({
+                    correctId: q.correct.id,
+                    choiceIds: q.choices.map(c => c.id),
+                    type: q.type
+                }));
+
+                await window.firebaseModules.addDoc(window.firebaseModules.collection(db, "test_sessions"), {
+                    name,
+                    targetClasses: ["3-A", "3-B", "3-C", "3-D", "3-E"], // Target all for now
+                    status: 'standby',
+                    startTime: window.firebaseModules.serverTimestamp(),
+                    questionSet: qs
+                });
+            };
+
+            const toggleStatus = async (session, newStatus) => {
+                await window.firebaseModules.updateDoc(window.firebaseModules.doc(db, "test_sessions", session.id), {
+                    status: newStatus
+                });
+            };
+
+            const downloadCSV = async () => {
+                // Fetch all Users
+                const userSnap = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, "users"));
+                const users = userSnap.docs.map(d => d.data()).filter(u => u.role === 'student');
+
+                // Fetch all Test Results
+                const resultSnap = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, "test_results"));
+                const results = resultSnap.docs.map(d => d.data());
+
+                // Fetch all Sessions to map columns
+                const sessionSnap = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, "test_sessions"));
+                const sessionList = sessionSnap.docs.map(d => ({id: d.id, name: d.data().name}));
+
+                // Build CSV
+                // Header: Name, Class, Sess1, Sess2..., Stamps, Attempts, PassRate, (Blank), (Blank), AvgScore, DrillPassRate
+                let csv = "氏名,クラス";
+                sessionList.forEach(s => csv += `,${s.name}`);
+                csv += ",スタンプ数,演習回数,演習合格数,,テスト平均,演習合格率\n";
+
+                users.forEach(u => {
+                    let line = `${u.name},${u.classId}`;
+                    let totalScore = 0;
+                    let testCount = 0;
+
+                    sessionList.forEach(s => {
+                        const res = results.find(r => r.uid === u.uid && r.sessionId === s.id);
+                        if (res) {
+                            line += `,${res.score}`;
+                            totalScore += res.score;
+                            testCount++;
+                        } else {
+                            line += ",-";
+                        }
+                    });
+
+                    const drillRate = u.drillStats?.attempts ? ((u.drillStats.passes / u.drillStats.attempts) * 100).toFixed(1) : 0;
+                    const testAvg = testCount ? (totalScore / testCount).toFixed(1) : 0;
+
+                    line += `,${u.stamps},${u.drillStats?.attempts || 0},${u.drillStats?.passes || 0},,${testAvg},${drillRate}%`;
+                    csv += line + "\n";
+                });
+
+                // Download
+                const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csv], { type: 'text/csv;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                link.setAttribute("href", url);
+                link.setAttribute("download", `organic_chem_data_${new Date().toISOString().slice(0,10)}.csv`);
+                link.click();
+            };
+
+            const clearStudents = async () => {
+                if(!confirm("本当に全生徒データを削除しますか？この操作は取り消せません。")) return;
+                // Batch delete is limited to 500, simple implementation:
+                const snap = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, "users"));
+                const batch = window.firebaseModules.writeBatch(db);
+                let count = 0;
+                snap.forEach(d => {
+                    if (d.data().role === 'student') {
+                         batch.delete(d.ref);
+                         count++;
+                    }
+                });
+                await batch.commit();
+                alert(`${count}件の生徒データを削除しました。`);
+            };
+
+            return (
+                <div className="min-h-screen bg-purple-50 p-4">
+                    <header className="bg-white p-4 rounded-xl shadow-sm mb-6 flex justify-between items-center max-w-5xl mx-auto">
+                        <h1 className="text-xl font-bold text-purple-800">教員管理画面</h1>
+                        <button onClick={onBack} className="text-gray-500">戻る</button>
+                    </header>
+
+                    <div className="max-w-5xl mx-auto">
+                        {/* Tabs */}
+                        <div className="flex space-x-2 mb-6">
+                            {['tests', 'data', 'students'].map(t => (
+                                <button 
+                                    key={t}
+                                    onClick={() => setTab(t)}
+                                    className={`px-4 py-2 rounded-lg font-bold capitalize ${tab === t ? 'bg-purple-600 text-white' : 'bg-white text-purple-600'}`}
+                                >
+                                    {t === 'tests' ? 'テスト実施' : t === 'data' ? 'データ出力' : '生徒管理'}
+                                </button>
+                            ))}
+                        </div>
+
+                        {tab === 'tests' && (
+                            <div>
+                                <button onClick={createSession} className="mb-6 bg-purple-600 text-white px-6 py-3 rounded-xl shadow hover:bg-purple-700 font-bold">
+                                    ＋ 新規テストを作成
+                                </button>
+                                <div className="grid gap-4">
+                                    {sessions.map(s => (
+                                        <div key={s.id} className="bg-white p-6 rounded-xl shadow flex justify-between items-center">
+                                            <div>
+                                                <h3 className="font-bold text-lg">{s.name}</h3>
+                                                <span className={`inline-block px-2 py-1 text-xs rounded-full mt-1 
+                                                    ${s.status === 'active' ? 'bg-red-100 text-red-600 animate-pulse' : s.status === 'standby' ? 'bg-yellow-100 text-yellow-600' : 'bg-gray-100 text-gray-500'}`}>
+                                                    {s.status.toUpperCase()}
+                                                </span>
+                                            </div>
+                                            <div className="flex space-x-2">
+                                                {s.status === 'standby' && (
+                                                    <button onClick={() => toggleStatus(s, 'active')} className="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600">開始</button>
+                                                )}
+                                                {s.status === 'active' && (
+                                                    <button onClick={() => toggleStatus(s, 'closed')} className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600">終了</button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {tab === 'data' && (
+                            <div className="bg-white p-8 rounded-xl shadow text-center">
+                                <h2 className="text-xl font-bold mb-4">成績データのエクスポート</h2>
+                                <p className="text-gray-500 mb-6">全生徒のテスト結果、スタンプ数、演習統計をCSV形式でダウンロードします。</p>
+                                <button onClick={downloadCSV} className="bg-blue-600 text-white px-8 py-4 rounded-xl shadow-lg hover:bg-blue-700 font-bold flex items-center justify-center mx-auto">
+                                    <span className="mr-2">📥</span> CSVダウンロード
+                                </button>
+                            </div>
+                        )}
+
+                        {tab === 'students' && (
+                            <div className="bg-white p-8 rounded-xl shadow border-l-4 border-red-500">
+                                <h2 className="text-xl font-bold mb-4 text-red-600">危険な操作</h2>
+                                <p className="text-gray-600 mb-6">年度更新時などに使用します。削除されたデータは復元できません。</p>
+                                <button onClick={clearStudents} className="bg-red-100 text-red-600 border border-red-200 px-6 py-3 rounded-lg hover:bg-red-200 font-bold">
+                                    全生徒データを削除する
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        // --- Render ---
+        const root = ReactDOM.createRoot(document.getElementById("root"));
+        root.render(<App />);
+    </script>
+</body>
+</html>
