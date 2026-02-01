@@ -18,12 +18,12 @@
     <!-- Firebase SDKs (Modular) -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+        import { getAuth, signInWithPopup, GoogleAuthProvider, signInAnonymously, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
         import { getFirestore, collection, doc, setDoc, getDoc, getDocs, updateDoc, onSnapshot, addDoc, query, where, serverTimestamp, writeBatch, deleteDoc, increment } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
         // Expose Firebase to window for React component to use
         window.firebaseModules = { 
-            initializeApp, getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut,
+            initializeApp, getAuth, signInWithPopup, GoogleAuthProvider, signInAnonymously, onAuthStateChanged, signOut,
             getFirestore, collection, doc, setDoc, getDoc, getDocs, updateDoc, onSnapshot, addDoc, query, where, serverTimestamp, writeBatch, deleteDoc, increment
         };
     </script>
@@ -293,7 +293,7 @@
                 const role = isTeacher ? 'teacher' : 'student';
                 const data = {
                     uid: user.uid,
-                    email: user.email,
+                    email: user.email || 'guest@example.com',
                     name,
                     classId,
                     role,
@@ -312,7 +312,7 @@
             }
 
             if (!userData) {
-                return <RegistrationScreen onRegister={handleRegister} defaultName={user.displayName} />;
+                return <RegistrationScreen onRegister={handleRegister} />;
             }
 
             // Router
@@ -419,11 +419,22 @@
                     if (error.code === 'auth/configuration-not-found') {
                         msg += "\n【エラー原因】Firebaseコンソールで「Googleログイン」が有効になっていません。\nAuthentication > Sign-in method でGoogleを有効にしてください。";
                     } else if (error.code === 'auth/unauthorized-domain') {
-                        msg += "\n【エラー原因】ドメインが許可されていません。\nAuthentication > Settings > Authorized domains に現在のドメイン（例: netlify.appなど）を追加してください。";
+                        msg += `\n【重要：設定が必要です】\nこのサイトのドメイン(${window.location.hostname})が許可されていません。\n\nFirebaseコンソール > Authentication > Settings > 承認済みドメイン\nに「${window.location.hostname}」を追加してください。`;
                     } else if (error.code === 'auth/popup-blocked') {
-                        msg += "\n【エラー原因】ポップアップがブロックされました。\nブラウザの設定で許可するか、このページをGoogleサイトに埋め込まずに直接開いてください。";
+                        msg += "\n【エラー原因】ポップアップがブロックされました。\nブラウザのアドレスバーにあるポップアップ設定から許可してください。";
+                    } else if (error.code === 'auth/popup-closed-by-user') {
+                        msg = "ログインがキャンセルされました。";
                     }
                     alert(msg);
+                }
+            };
+            
+            const handleGuestLogin = async () => {
+                 try {
+                    await window.firebaseModules.signInAnonymously(auth);
+                } catch (error) {
+                    console.error("Guest Login failed", error);
+                    alert("ゲストログインに失敗しました。\nFirebaseコンソールで「匿名(Anonymous)」ログインが有効になっているか確認してください。");
                 }
             };
 
@@ -433,24 +444,36 @@
                         <div className="text-6xl mb-4">⚗️</div>
                         <h1 className="text-3xl font-bold text-gray-800 mb-2">Organic Chem Master</h1>
                         <p className="text-gray-500 mb-8">有機化合物の構造式をマスターしよう</p>
-                        <button 
-                            onClick={handleGoogleLogin}
-                            className="w-full bg-white border border-gray-300 text-gray-700 font-bold py-3 px-4 rounded-xl shadow-sm hover:bg-gray-50 flex items-center justify-center transition"
-                        >
-                            <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-6 h-6 mr-2" />
-                            Googleでログイン
-                        </button>
-                        <p className="text-xs text-red-400 mt-4">
-                            ※重要: このアプリはGoogleサイトに埋め込まず、<br/>
-                            別タブで開いて利用してください。
-                        </p>
+                        <div className="space-y-3">
+                            <button 
+                                onClick={handleGoogleLogin}
+                                className="w-full bg-white border border-gray-300 text-gray-700 font-bold py-3 px-4 rounded-xl shadow-sm hover:bg-gray-50 flex items-center justify-center transition"
+                            >
+                                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-6 h-6 mr-2" />
+                                Googleでログイン
+                            </button>
+                            
+                            <div className="relative flex py-2 items-center">
+                                <div className="flex-grow border-t border-gray-300"></div>
+                                <span className="flex-shrink-0 mx-4 text-gray-400 text-sm">または</span>
+                                <div className="flex-grow border-t border-gray-300"></div>
+                            </div>
+                            
+                            <button 
+                                onClick={handleGuestLogin}
+                                className="w-full bg-gray-600 text-white font-bold py-3 px-4 rounded-xl shadow-sm hover:bg-gray-700 flex items-center justify-center transition"
+                            >
+                                ゲスト(匿名)として開始
+                            </button>
+                            <p className="text-xs text-gray-400 mt-2">※Googleログイン設定がうまくいかない場合はゲストをお使いください</p>
+                        </div>
                     </div>
                 </div>
             );
         };
 
-        const RegistrationScreen = ({ onRegister, defaultName }) => {
-            const [name, setName] = useState(defaultName || "");
+        const RegistrationScreen = ({ onRegister }) => {
+            const [name, setName] = useState("");
             const [classId, setClassId] = useState("3-A");
             const [isTeacher, setIsTeacher] = useState(false);
             const [password, setPassword] = useState("");
