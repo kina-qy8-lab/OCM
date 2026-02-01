@@ -21,41 +21,23 @@
         import { getAuth, signInWithPopup, GoogleAuthProvider, signInWithEmailAndPassword, createUserWithEmailAndPassword, signInAnonymously, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
         import { getFirestore, collection, doc, setDoc, getDoc, getDocs, updateDoc, onSnapshot, addDoc, query, where, orderBy, serverTimestamp, writeBatch, deleteDoc, increment } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-        // Expose Firebase to window for React component to use
         window.firebaseModules = { 
             initializeApp, getAuth, signInWithPopup, GoogleAuthProvider, signInWithEmailAndPassword, createUserWithEmailAndPassword, signInAnonymously, onAuthStateChanged, signOut,
             getFirestore, collection, doc, setDoc, getDoc, getDocs, updateDoc, onSnapshot, addDoc, query, where, orderBy, serverTimestamp, writeBatch, deleteDoc, increment
         };
     </script>
 
-    <!-- Custom Styles for Animations -->
     <style>
         @import url('https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;700&display=swap');
-        
-        body {
-            font-family: 'M PLUS Rounded 1c', sans-serif;
-            background-color: #f0fdf4; /* Green-50 */
-        }
-        
+        body { font-family: 'M PLUS Rounded 1c', sans-serif; background-color: #f0fdf4; }
         .fade-in { animation: fadeIn 0.5s ease-in; }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-
-        .slide-up { animation: slideUp 0.5s ease-out; }
-        @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-
         .stamp-animation { animation: stamp 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
-        @keyframes stamp { 
-            0% { transform: scale(3); opacity: 0; } 
-            100% { transform: scale(1); opacity: 1; } 
-        }
-
+        @keyframes stamp { 0% { transform: scale(3); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
         .correct-flash { animation: flashGreen 0.5s; }
         @keyframes flashGreen { 0%, 100% { background-color: white; } 50% { background-color: #bbf7d0; } }
-
         .wrong-flash { animation: flashRed 0.5s; }
         @keyframes flashRed { 0%, 100% { background-color: white; } 50% { background-color: #fecaca; } }
-
-        /* Custom Scrollbar */
         ::-webkit-scrollbar { width: 8px; }
         ::-webkit-scrollbar-track { background: #f1f1f1; }
         ::-webkit-scrollbar-thumb { background: #888; border-radius: 4px; }
@@ -68,8 +50,6 @@
     <script type="text/babel">
         const { useState, useEffect, useRef, useMemo } = React;
 
-        // --- Configuration & Data ---
-        
         const firebaseConfig = {
             apiKey: "AIzaSyCPziY4qZiRI0LbWXrSCnsOhJUxNwvdxxE",
             authDomain: "organic-chem-master-74df8.firebaseapp.com",
@@ -647,6 +627,9 @@
             const q = questions[currentIdx];
             if (showResult) return <div className="text-center p-10 font-bold text-2xl">集計中...</div>;
 
+            // Generate a unique key for the question image to force re-render
+            const questionImageKey = `q-img-${q.correct.id}-${currentIdx}`;
+
             return (
                 <div className={`max-w-2xl mx-auto bg-white rounded-3xl shadow-xl overflow-hidden ${selected === 'correct' ? 'correct-flash' : selected === 'wrong' ? 'wrong-flash' : ''}`}>
                     <div className="bg-gray-100 p-4 flex justify-between items-center">
@@ -663,7 +646,7 @@
                                 <div className="flex justify-center">
                                     <div className="bg-white border-2 border-gray-200 rounded-xl p-4 w-64 h-48 flex items-center justify-center overflow-hidden">
                                          <img 
-                                            key={q.correct.url}
+                                            key={questionImageKey} // Force re-render on question change
                                             src={q.correct.url} 
                                             alt="structure" 
                                             className="max-w-full max-h-full object-contain" 
@@ -683,7 +666,7 @@
                         <div className="grid grid-cols-2 gap-4">
                             {q.choices.map((choice, i) => (
                                 <button
-                                    key={i}
+                                    key={`choice-${choice.id}-${currentIdx}`} // UNIQUE KEY IS CRITICAL HERE
                                     onClick={() => handleAnswer(choice)}
                                     disabled={selected !== null}
                                     className={`p-4 rounded-xl border-2 transition transform hover:scale-105 active:scale-95 flex items-center justify-center min-h-[80px]
@@ -697,7 +680,7 @@
                                     ) : (
                                         <div className="w-full h-24 flex items-center justify-center overflow-hidden">
                                             <img 
-                                                key={choice.url}
+                                                key={`c-img-${choice.id}`} // Force re-render
                                                 src={choice.url} 
                                                 alt="choice" 
                                                 className="max-w-full max-h-full object-contain" 
@@ -716,11 +699,16 @@
 
         const generateQuestions = (count) => {
             const questions = [];
+            // Use spread to clone array before shuffle to avoid side effects
             const all = shuffleArray([...COMPOUNDS]);
+            
             for (let i = 0; i < count; i++) {
                 const correct = all[i];
+                // Clone array for filtering
                 const others = shuffleArray(COMPOUNDS.filter(c => c.id !== correct.id)).slice(0, 3);
+                // Create new array for choices
                 const choices = shuffleArray([correct, ...others]);
+                
                 questions.push({
                     correct,
                     choices,
@@ -736,8 +724,13 @@
             const [result, setResult] = useState(null);
 
             const startDrill = () => {
-                setQuestions(generateQuestions(10));
-                setState('playing');
+                const newQuestions = generateQuestions(10);
+                if (newQuestions && newQuestions.length > 0) {
+                    setQuestions(newQuestions);
+                    setState('playing');
+                } else {
+                    alert("問題の生成に失敗しました。リロードしてください。");
+                }
             };
 
             const handleFinish = async (res) => {
