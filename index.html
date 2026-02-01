@@ -21,23 +21,41 @@
         import { getAuth, signInWithPopup, GoogleAuthProvider, signInWithEmailAndPassword, createUserWithEmailAndPassword, signInAnonymously, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
         import { getFirestore, collection, doc, setDoc, getDoc, getDocs, updateDoc, onSnapshot, addDoc, query, where, orderBy, serverTimestamp, writeBatch, deleteDoc, increment } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
+        // Expose Firebase to window for React component to use
         window.firebaseModules = { 
             initializeApp, getAuth, signInWithPopup, GoogleAuthProvider, signInWithEmailAndPassword, createUserWithEmailAndPassword, signInAnonymously, onAuthStateChanged, signOut,
             getFirestore, collection, doc, setDoc, getDoc, getDocs, updateDoc, onSnapshot, addDoc, query, where, orderBy, serverTimestamp, writeBatch, deleteDoc, increment
         };
     </script>
 
+    <!-- Custom Styles for Animations -->
     <style>
         @import url('https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;700&display=swap');
-        body { font-family: 'M PLUS Rounded 1c', sans-serif; background-color: #f0fdf4; }
+        
+        body {
+            font-family: 'M PLUS Rounded 1c', sans-serif;
+            background-color: #f0fdf4; /* Green-50 */
+        }
+        
         .fade-in { animation: fadeIn 0.5s ease-in; }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+        .slide-up { animation: slideUp 0.5s ease-out; }
+        @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
         .stamp-animation { animation: stamp 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
-        @keyframes stamp { 0% { transform: scale(3); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+        @keyframes stamp { 
+            0% { transform: scale(3); opacity: 0; } 
+            100% { transform: scale(1); opacity: 1; } 
+        }
+
         .correct-flash { animation: flashGreen 0.5s; }
         @keyframes flashGreen { 0%, 100% { background-color: white; } 50% { background-color: #bbf7d0; } }
+
         .wrong-flash { animation: flashRed 0.5s; }
         @keyframes flashRed { 0%, 100% { background-color: white; } 50% { background-color: #fecaca; } }
+
+        /* Custom Scrollbar */
         ::-webkit-scrollbar { width: 8px; }
         ::-webkit-scrollbar-track { background: #f1f1f1; }
         ::-webkit-scrollbar-thumb { background: #888; border-radius: 4px; }
@@ -50,6 +68,8 @@
     <script type="text/babel">
         const { useState, useEffect, useRef, useMemo } = React;
 
+        // --- Configuration & Data ---
+        
         const firebaseConfig = {
             apiKey: "AIzaSyCPziY4qZiRI0LbWXrSCnsOhJUxNwvdxxE",
             authDomain: "organic-chem-master-74df8.firebaseapp.com",
@@ -70,107 +90,107 @@
             { id: 8, name: "オクタン", url: "https://drive.google.com/uc?id=1ceqcVpHUDIl9l5pYE0qs5T5fNx4rG5vz" },
             { id: 9, name: "ノナン", url: "https://drive.google.com/uc?id=1yRa3bZWP4aQWTnYXva2ajI_GXKDnTYxj" },
             { id: 10, name: "デカン", url: "https://drive.google.com/uc?id=1F7_wGXPKV4oSHUShlhAT5sijTxxowW3m" },
-            { id: 11, name: "2-メチルプロパン", url: "https://drive.google.com/uc?id=14K4Krkb2Dqf3DAm_-z4yXX4d4kWD0kG5" },
-            { id: 12, name: "2,2-ジメチルプロパン", url: "https://drive.google.com/uc?id=1-int_XRJBVsU0vIgZmpnXQY4P5N_osr9" },
-            { id: 13, name: "2-メチルブタン", url: "https://drive.google.com/uc?id=1GePbtEc1a1QjBKVFjeh41ABzw9lMjaKM" },
-            { id: 14, name: "クロロメタン", url: "https://drive.google.com/uc?id=1_pwuRWh5fZ2MLCivvrEClhYVbj3RiI2A" },
-            { id: 15, name: "シクロプロパン", url: "https://drive.google.com/uc?id=1cbUIx6RF5glFD2vv9tQdl_-EYuHRiThL" },
-            { id: 16, name: "シクロブタン", url: "https://drive.google.com/uc?id=1ndAdSMZ-2PW7cOepP4xR6od3kqa9cY0X" },
-            { id: 17, name: "シクロペンタン", url: "https://drive.google.com/uc?id=1mg5ToUTzj5HwpmaOTnYuZu55CY74zSLU" },
-            { id: 18, name: "シクロヘキサン", url: "https://drive.google.com/uc?id=1dSkKW-QhPlbZ1w9W0-O8nLo7RHcg6wDw" },
-            { id: 19, name: "1,3-ジブロモプロパン", url: "https://drive.google.com/uc?id=1VJ-CfAN2uishpm9wTZpCdwMsT-MST4h7" },
-            { id: 20, name: "エチレン", url: "https://drive.google.com/uc?id=1fHsWsXlPIvd3x3bbxm86IbWoJY-KtiZb" },
-            { id: 21, name: "プロペン", url: "https://drive.google.com/uc?id=18oEhAyKLlBY9dQ3M5_AjTw8VKa5a_cjZ" },
-            { id: 22, name: "1-ブテン", url: "https://drive.google.com/uc?id=1zzr3qIiIpeNwJMZgrG-RuQCQYu7s8d2b" },
-            { id: 23, name: "1-ペンテン", url: "https://drive.google.com/uc?id=1JpKeyNXgIv0RXc2VntrWJCeoem-DatqZ" },
-            { id: 24, name: "ポリエチレン", url: "https://drive.google.com/uc?id=1kOHmza4LS48n3v75odFXdvf-rv5mfb0z" },
-            { id: 25, name: "1,2-ジクロロエタン", url: "https://drive.google.com/uc?id=1S9bQgZdSX_lh4_CMkXMZU0_DdRGXImdi" },
-            { id: 26, name: "塩化ビニル", url: "https://drive.google.com/uc?id=1nb7fZllNwzaMehukxofoQvrZgJoZsrIg" },
-            { id: 27, name: "ポリ塩化ビニル", url: "https://drive.google.com/uc?id=1X-JfZD8UX8X1A7Z8JYfog8ySPLHaIrfb" },
-            { id: 28, name: "シクロヘキセン", url: "https://drive.google.com/uc?id=1G2di0KGHHwb7XrrujmtCx2LnKtqR3GKh" },
-            { id: 29, name: "1,2-ジブロモシクロヘキサン", url: "https://drive.google.com/uc?id=1mujXix4X9rXHMuHvmSDhHbyIlNTugv6a" },
-            { id: 30, name: "アセチレン", url: "https://drive.google.com/uc?id=1p9nsVX1Imr73OgdWf6-3WCxC66UidiQi" },
-            { id: 31, name: "プロピン", url: "https://drive.google.com/uc?id=1V14tJWEQqLjSmGm8QlSp_ln_HfgwwJju" },
-            { id: 32, name: "1-ブチン", url: "https://drive.google.com/uc?id=1wRQCUZqXTDcxvfr-mxGY_SBmD2bh-2gj" },
-            { id: 33, name: "2-ブチン", url: "https://drive.google.com/uc?id=1NEWWg-VwBzsPUJ2mdCwBVXTal7r-rnbz" },
-            { id: 34, name: "1,2-ジブロモエチレン", url: "https://drive.google.com/uc?id=1S-v3oD6zbcRE-TpF1jEyISQLi9aIrrFR" },
-            { id: 35, name: "1,1,2,2-テトラブロモエタン", url: "https://drive.google.com/uc?id=1IgA0UmN8wvQckAyrkIMCwkZrHodzL80E" },
-            { id: 36, name: "酢酸ビニル", url: "https://drive.google.com/uc?id=1YcDY-GFAoX7qufa0slHtWbWjcR6mqYzi" },
-            { id: 37, name: "ビニルアルコール", url: "https://drive.google.com/uc?id=1nks_uca294VAITXzfBGxXjOK1INht9Un" },
-            { id: 38, name: "メタノール", url: "https://drive.google.com/uc?id=14YA0CDzodiyBybgaXGxlKmdQ1A-AuFCB" },
-            { id: 39, name: "エタノール", url: "https://drive.google.com/uc?id=1UtJ86puivNGIpex6OvgwpMqMVWp-igkS" },
-            { id: 40, name: "1-プロパノール", url: "https://drive.google.com/uc?id=1dwbFMkOn1_oxQrOqs9eRa0t0cirVJu_k" },
-            { id: 41, name: "2-プロパノール", url: "https://drive.google.com/uc?id=1dYgIwT2xjSN9lkFrRo6_vhBztKZX5EgB" },
-            { id: 42, name: "1-ブタノール", url: "https://drive.google.com/uc?id=16Vxtx6QRUNafLi6gJUWiiYacNdgqJVY4" },
-            { id: 43, name: "2-ブタノール", url: "https://drive.google.com/uc?id=1fOD_Q9hUaL3s3jFiz6zjnjXpxnprW_KC" },
-            { id: 44, name: "2-メチル-2-プロパノール", url: "https://drive.google.com/uc?id=1Ks4mgkY_atH0HfpAX5mfU1LF8_iIAlZJ" },
-            { id: 45, name: "エチレングリコール(1,2-エタンジオール)", url: "https://drive.google.com/uc?id=1hDy-mm3_QV8aSBMrqW9468DMsaFsTVMf" },
-            { id: 46, name: "グリセリン(1,2,3-プロパントリオール)", url: "https://drive.google.com/uc?id=1GpIi5c0qqENnbS5I-L9xL20eG8mCmas6" },
-            { id: 47, name: "ジメチルエーテル", url: "https://drive.google.com/uc?id=18p2hLqqmn7HD_fvoqsfSQUQibXsPSYsk" },
-            { id: 48, name: "ジエチルエーテル", url: "https://drive.google.com/uc?id=1MCqTU1bxjop9Cx1N7DiZLYUQNUazgWgr" },
-            { id: 49, name: "ホルムアルデヒド", url: "https://drive.google.com/uc?id=17I2aAY0DaogMmdyz8RBB-xhGOEtNJ_2o" },
-            { id: 50, name: "アセトアルデヒド", url: "https://drive.google.com/uc?id=1MLRk9V36HeUz4ykQSluAOr7XKSt51OUw" },
-            { id: 51, name: "アセトン", url: "https://drive.google.com/uc?id=17VYiJStifeQi-z5l3f-vCJPF2KqDXO7T" },
-            { id: 52, name: "ジエチルケトン", url: "https://drive.google.com/uc?id=1FHisQ7G4_5NDVKOLjd5XEC33bbePpR5c" },
-            { id: 53, name: "エチルメチルケトン", url: "https://drive.google.com/uc?id=1af_8yBLA5W5jRzSiOhFNJ9kxWv46P0oY" },
-            { id: 54, name: "ギ酸", url: "https://drive.google.com/uc?id=1uOTbTvfnp_ku5v2aZg9sEqex-VnubXXP" },
-            { id: 55, name: "酢酸", url: "https://drive.google.com/uc?id=1qpRtUvwn2jFER_b6FzTbNO379Lr5pBTJ" },
-            { id: 56, name: "プロピオン酸", url: "https://drive.google.com/uc?id=1xc3eo0TcClPmZixn9CYsuwYTZ4PUGLGh" },
-            { id: 57, name: "シュウ酸", url: "https://drive.google.com/uc?id=1jrCSgMRlDQykc41WeeRkr4zu2iMxzPwz" },
-            { id: 58, name: "フマル酸", url: "https://drive.google.com/uc?id=1-ncB_GUXGdBWBRZniHzLule8Xk8SLzgn" },
-            { id: 59, name: "マレイン酸", url: "https://drive.google.com/uc?id=1a9FO6e0OUXb6K3B5ZYWAuBdgnc9RadeU" },
-            { id: 60, name: "ギ酸メチル", url: "https://drive.google.com/uc?id=1oAflkadU9EOIhG8zoYQ4JgZ7mH8s2N6e" },
-            { id: 61, name: "ギ酸エチル", url: "https://drive.google.com/uc?id=1vlTBTgEduTZngEsoJjkwnjRHPJzyfJPs" },
-            { id: 62, name: "酢酸メチル", url: "https://drive.google.com/uc?id=1Ff-uoS4SnqS6I-Vz0bcKAguRVP6jaAB7" },
-            { id: 63, name: "酢酸エチル", url: "https://drive.google.com/uc?id=13dSmxVaIhnBIRuLJQvi_-BcY32fCqID5" },
-            { id: 64, name: "ニトログリセリン", url: "https://drive.google.com/uc?id=1mtAlD4eKCGXVmgEF86tlrSIS9MqCbH0S" },
-            { id: 65, name: "無水酢酸", url: "https://drive.google.com/uc?id=1j8fQ9j_EGZ5FEv9IMgSIDrLaRbIAbaEh" },
-            { id: 66, name: "無水マレイン酸", url: "https://drive.google.com/uc?id=1pSYdqFdPEolimAhXq40f9DOg9IIhyS2M" },
-            { id: 67, name: "ステアリン酸", url: "https://drive.google.com/uc?id=1ol0tKW88zkow04y6j4Q9rxoO23xRCcik" },
-            { id: 68, name: "オレイン酸", url: "https://drive.google.com/uc?id=18wtdKAoZ2APZTUIZ73OR-6v1BA5jhZf8" },
-            { id: 69, name: "リノール酸", url: "https://drive.google.com/uc?id=1uo6YMqjLTTuNiv157UeYJnCJqetoui0U" },
-            { id: 70, name: "リノレン酸", url: "https://drive.google.com/uc?id=1n-PtMeWqPcqWm-VIZeKPX73Fr_7-kKsP" },
-            { id: 71, name: "パルミチン酸", url: "https://drive.google.com/uc?id=1em_wSlTI1Yqlb0v2_6CsHbsoubcoPsfK" },
-            { id: 72, name: "トルエン", url: "https://drive.google.com/uc?id=1VDsxFdP2H0gENGLVaQKNI82J_TPW999t" },
-            { id: 73, name: "o-キシレン", url: "https://drive.google.com/uc?id=13XA16_FcKMwkAsIKZLNK66t0Gtncan5b" },
-            { id: 74, name: "m-キシレン", url: "https://drive.google.com/uc?id=1lLEnHVhuPbhBTy_LSsNmwq-M63GK4vX6" },
-            { id: 75, name: "p-キシレン", url: "https://drive.google.com/uc?id=1wtj8VfQClmn3oSLXSFbxJ80mVohAcpDY" },
-            { id: 76, name: "ナフタレン", url: "https://drive.google.com/uc?id=1ucWCMs6PLxxHv1gHf0jay4jQ19JV1JJp" },
-            { id: 77, name: "エチルベンゼン", url: "https://drive.google.com/uc?id=1vwwmjs8pot9IgWliT9Z_9E3Iq0qT-Q6c" },
-            { id: 78, name: "スチレン", url: "https://drive.google.com/uc?id=1Y77s0YNIcO0A9VlgiE12Mz09WmkYIeph" },
-            { id: 79, name: "アントラセン", url: "https://drive.google.com/uc?id=1VpuN8v9dWYNp6SBFjXQJV2lz3P74HuPp" },
-            { id: 80, name: "ニトロベンゼン", url: "https://drive.google.com/uc?id=1AorSLuRzZVukm3tu9xN3ifFg3jlrNkxL" },
-            { id: 81, name: "ベンゼンスルホン酸", url: "https://drive.google.com/uc?id=1ZQ-tGPuv-YxAcmBzmVe4YBuF_DQUCejW" },
-            { id: 82, name: "ベンゼンスルホン酸ナトリウム", url: "https://drive.google.com/uc?id=1fDP2ZMIt-Nfy9-c6YkScUnahe87FzB6C" },
-            { id: 83, name: "クロロベンゼン", url: "https://drive.google.com/uc?id=1-PC9yIEf9xKySuteoMBHyMlwYKIjlmb-" },
-            { id: 84, name: "ブロモベンゼン", url: "https://drive.google.com/uc?id=1chwCVv0x0nx3Ljs2Us9C6do2z4s6qc_-" },
-            { id: 85, name: "フェノール", url: "https://drive.google.com/uc?id=1vvSIPoASaLA1YnhHKKhqm4NpyewSEWyI" },
-            { id: 86, name: "o-クレゾール", url: "https://drive.google.com/uc?id=1xBbpXrglhh1jFwxhcf5jcLn2GKKf1bw9" },
-            { id: 87, name: "m-クレゾール", url: "https://drive.google.com/uc?id=1YbprW360oG3VX9bjNl1n6t8eJ6BtFX43" },
-            { id: 88, name: "p-クレゾール", url: "https://drive.google.com/uc?id=1KmhaqmQqwjj62u5I2Bces9WCDDZW5JnR" },
-            { id: 89, name: "2-ナフトール", url: "https://drive.google.com/uc?id=1dxxG5zkCEuhCVcC5Iq9neiMOHK10HrxJ" },
-            { id: 90, name: "1-ナフトール", url: "https://drive.google.com/uc?id=1zkB1-129ywkhlhCfCqPCkP01jpI3Jkts" },
-            { id: 91, name: "サリチル酸", url: "https://drive.google.com/uc?id=1bLmAsLWpBX1bU3HDLi2SPP3PkdRbaZL3" },
-            { id: 92, name: "ナトリウムフェノキシド", url: "https://drive.google.com/uc?id=1299ipfDqC7IsoWjk3ZiiY6tkyJV3FjVF" },
-            { id: 93, name: "2,4,6-トリブロモフェノール", url: "https://drive.google.com/uc?id=1dymAxReQn18wHoxFjxDKev6KevOxikk2" },
-            { id: 94, name: "ピクリン酸(2,4,6-トリニトロフェノール)", url: "https://drive.google.com/uc?id=14Io2aW8KqkzSePTbDBzda1qbSHAd8FvP" },
-            { id: 95, name: "安息香酸", url: "https://drive.google.com/uc?id=1hJTiqbYOQ6eXjxzpuJIAiDXAlLBLi9ev" },
-            { id: 96, name: "フタル酸", url: "https://drive.google.com/uc?id=1WranYLAIfl62BrtCu53ZjDwLNjbe0YXF" },
-            { id: 97, name: "テレフタル酸", url: "https://drive.google.com/uc?id=1KWv5mdo3MqNDhAocDnimV_28zHaHLO4-" },
-            { id: 98, name: "ベンズアルデヒド", url: "https://drive.google.com/uc?id=1E9CXpDC8Fama-B_cEw-IyIBU99cR8HyM" },
-            { id: 99, name: "無水フタル酸", url: "https://drive.google.com/uc?id=1SbkDLX3iQ1v5BzRETv9-r3T74TtdwOhP" },
-            { id: 100, name: "アセチルサリチル酸", url: "https://drive.google.com/uc?id=1Vo4ZLWuvX7KJJ6M4in5yK3LhdRRvvg7y" },
-            { id: 101, name: "サリチル酸メチル", url: "https://drive.google.com/uc?id=1lOIv8i5j7hUPUanbHYppuFAgV2c3E8TW" },
-            { id: 102, name: "アニリン", url: "https://drive.google.com/uc?id=16pBQ1mbe6DDQGqRYn6oB8qXfcNOQfMzH" },
-            { id: 103, name: "アニリン塩酸塩", url: "https://drive.google.com/uc?id=1pK4QTYn-izGgWNnKykwUdAXq4Ui-q9m7" },
-            { id: 104, name: "アセトアニリド", url: "https://drive.google.com/uc?id=1stULQIdzgq3-dtGXJTRxqx_zesQDqNlJ" },
-            { id: 105, name: "塩化ベンゼンジアゾニウム", url: "https://drive.google.com/uc?id=1pI5k4uI28IDgWXVi7B5N7dEW08IumdO5" },
-            { id: 106, name: "p-ヒドロキシアゾベンゼン", url: "https://drive.google.com/uc?id=1XaGFiK5PENRVqBlaC69e3G3e_OMnRAR7" },
-            { id: 107, name: "1-フェニルアゾ-2-ナフトール", url: "https://drive.google.com/uc?id=1gMGVSqKspWzDedA0SXghz2c3inyg9djj" },
-            { id: 108, name: "2,4,6-トリニトロトルエン", url: "https://drive.google.com/uc?id=1N_rWbSkQyej74oE8op46m--FhDZMqQb9" },
-            { id: 109, name: "クメン", url: "https://drive.google.com/uc?id=1GAvORrAFlGV5oYQmt153C6Y4-QpEexAq" },
-            { id: 110, name: "クメンヒドロペルオキシド", url: "https://drive.google.com/uc?id=1Uk5Ql8uUKKbf1gJzhN9coKLJBJq3anN6" },
-            { id: 111, name: "ベンゼン", url: "https://drive.google.com/uc?id=1z7IXQ5IFp5TkVQgSIr6o5r5_S_W-Ozp9" }
+            { id: 11, name: "2-メチルプロパン", url: "https://drive.google.com/uc?id=18oEhAyKLlBY9dQ3M5_AjTw8VKa5a_cjZ" },
+            { id: 12, name: "2,2-ジメチルプロパン", url: "https://drive.google.com/uc?id=1kOHmza4LS48n3v75odFXdvf-rv5mfb0z" },
+            { id: 13, name: "2-メチルブタン", url: "https://drive.google.com/uc?id=1S9bQgZdSX_lh4_CMkXMZU0_DdRGXImdi" },
+            { id: 14, name: "クロロメタン", url: "https://drive.google.com/uc?id=1nb7fZllNwzaMehukxofoQvrZgJoZsrIg" },
+            { id: 15, name: "シクロプロパン", url: "https://drive.google.com/uc?id=1X-JfZD8UX8X1A7Z8JYfog8ySPLHaIrfb" },
+            { id: 16, name: "シクロブタン", url: "https://drive.google.com/uc?id=1G2di0KGHHwb7XrrujmtCx2LnKtqR3GKh" },
+            { id: 17, name: "シクロペンタン", url: "https://drive.google.com/uc?id=1mujXix4X9rXHMuHvmSDhHbyIlNTugv6a" },
+            { id: 18, name: "シクロヘキサン", url: "https://drive.google.com/uc?id=1p9nsVX1Imr73OgdWf6-3WCxC66UidiQi" },
+            { id: 19, name: "1,3-ジブロモプロパン", url: "https://drive.google.com/uc?id=1V14tJWEQqLjSmGm8QlSp_ln_HfgwwJju" },
+            { id: 20, name: "エチレン", url: "https://drive.google.com/uc?id=1wRQCUZqXTDcxvfr-mxGY_SBmD2bh-2gj" },
+            { id: 21, name: "プロペン", url: "https://drive.google.com/uc?id=1NEWWg-VwBzsPUJ2mdCwBVXTal7r-rnbz" },
+            { id: 22, name: "1-ブテン", url: "https://drive.google.com/uc?id=1S-v3oD6zbcRE-TpF1jEyISQLi9aIrrFR" },
+            { id: 23, name: "1-ペンテン", url: "https://drive.google.com/uc?id=1IgA0UmN8wvQckAyrkIMCwkZrHodzL80E" },
+            { id: 24, name: "ポリエチレン", url: "https://drive.google.com/uc?id=1YcDY-GFAoX7qufa0slHtWbWjcR6mqYzi" },
+            { id: 25, name: "1,2-ジクロロエタン", url: "https://drive.google.com/uc?id=1nks_uca294VAITXzfBGxXjOK1INht9Un" },
+            { id: 26, name: "塩化ビニル", url: "https://drive.google.com/uc?id=14YA0CDzodiyBybgaXGxlKmdQ1A-AuFCB" },
+            { id: 27, name: "ポリ塩化ビニル", url: "https://drive.google.com/uc?id=1UtJ86puivNGIpex6OvgwpMqMVWp-igkS" },
+            { id: 28, name: "シクロヘキセン", url: "https://drive.google.com/uc?id=1dwbFMkOn1_oxQrOqs9eRa0t0cirVJu_k" },
+            { id: 29, name: "1,2-ジブロモシクロヘキサン", url: "https://drive.google.com/uc?id=1dYgIwT2xjSN9lkFrRo6_vhBztKZX5EgB" },
+            { id: 30, name: "アセチレン", url: "https://drive.google.com/uc?id=16Vxtx6QRUNafLi6gJUWiiYacNdgqJVY4" },
+            { id: 31, name: "プロピン", url: "https://drive.google.com/uc?id=1fOD_Q9hUaL3s3jFiz6zjnjXpxnprW_KC" },
+            { id: 32, name: "1-ブチン", url: "https://drive.google.com/uc?id=1Ks4mgkY_atH0HfpAX5mfU1LF8_iIAlZJ" },
+            { id: 33, name: "2-ブチン", url: "https://drive.google.com/uc?id=1hDy-mm3_QV8aSBMrqW9468DMsaFsTVMf" },
+            { id: 34, name: "1,2-ジブロモエチレン", url: "https://drive.google.com/uc?id=1GpIi5c0qqENnbS5I-L9xL20eG8mCmas6" },
+            { id: 35, name: "1,1,2,2-テトラブロモエタン", url: "https://drive.google.com/uc?id=18p2hLqqmn7HD_fvoqsfSQUQibXsPSYsk" },
+            { id: 36, name: "酢酸ビニル", url: "https://drive.google.com/uc?id=1MCqTU1bxjop9Cx1N7DiZLYUQNUazgWgr" },
+            { id: 37, name: "ビニルアルコール", url: "https://drive.google.com/uc?id=17I2aAY0DaogMmdyz8RBB-xhGOEtNJ_2o" },
+            { id: 38, name: "メタノール", url: "https://drive.google.com/uc?id=1MLRk9V36HeUz4ykQSluAOr7XKSt51OUw" },
+            { id: 39, name: "エタノール", url: "https://drive.google.com/uc?id=17VYiJStifeQi-z5l3f-vCJPF2KqDXO7T" },
+            { id: 40, name: "1-プロパノール", url: "https://drive.google.com/uc?id=1FHisQ7G4_5NDVKOLjd5XEC33bbePpR5c" },
+            { id: 41, name: "2-プロパノール", url: "https://drive.google.com/uc?id=1af_8yBLA5W5jRzSiOhFNJ9kxWv46P0oY" },
+            { id: 42, name: "1-ブタノール", url: "https://drive.google.com/uc?id=1uOTbTvfnp_ku5v2aZg9sEqex-VnubXXP" },
+            { id: 43, name: "2-ブタノール", url: "https://drive.google.com/uc?id=1qpRtUvwn2jFER_b6FzTbNO379Lr5pBTJ" },
+            { id: 44, name: "2-メチル-2-プロパノール", url: "https://drive.google.com/uc?id=1xc3eo0TcClPmZixn9CYsuwYTZ4PUGLGh" },
+            { id: 45, name: "エチレングリコール(1,2-エタンジオール)", url: "https://drive.google.com/uc?id=1jrCSgMRlDQykc41WeeRkr4zu2iMxzPwz" },
+            { id: 46, name: "グリセリン(1,2,3-プロパントリオール)", url: "https://drive.google.com/uc?id=1-ncB_GUXGdBWBRZniHzLule8Xk8SLzgn" },
+            { id: 47, name: "ジメチルエーテル", url: "https://drive.google.com/uc?id=1a9FO6e0OUXb6K3B5ZYWAuBdgnc9RadeU" },
+            { id: 48, name: "ジエチルエーテル", url: "https://drive.google.com/uc?id=1oAflkadU9EOIhG8zoYQ4JgZ7mH8s2N6e" },
+            { id: 49, name: "ホルムアルデヒド", url: "https://drive.google.com/uc?id=1vlTBTgEduTZngEsoJjkwnjRHPJzyfJPs" },
+            { id: 50, name: "アセトアルデヒド", url: "https://drive.google.com/uc?id=1Ff-uoS4SnqS6I-Vz0bcKAguRVP6jaAB7" },
+            { id: 51, name: "アセトン", url: "https://drive.google.com/uc?id=13dSmxVaIhnBIRuLJQvi_-BcY32fCqID5" },
+            { id: 52, name: "ジエチルケトン", url: "https://drive.google.com/uc?id=1mtAlD4eKCGXVmgEF86tlrSIS9MqCbH0S" },
+            { id: 53, name: "エチルメチルケトン", url: "https://drive.google.com/uc?id=1j8fQ9j_EGZ5FEv9IMgSIDrLaRbIAbaEh" },
+            { id: 54, name: "ギ酸", url: "https://drive.google.com/uc?id=1pSYdqFdPEolimAhXq40f9DOg9IIhyS2M" },
+            { id: 55, name: "酢酸", url: "https://drive.google.com/uc?id=1ol0tKW88zkow04y6j4Q9rxoO23xRCcik" },
+            { id: 56, name: "プロピオン酸", url: "https://drive.google.com/uc?id=18wtdKAoZ2APZTUIZ73OR-6v1BA5jhZf8" },
+            { id: 57, name: "シュウ酸", url: "https://drive.google.com/uc?id=1uo6YMqjLTTuNiv157UeYJnCJqetoui0U" },
+            { id: 58, name: "フマル酸", url: "https://drive.google.com/uc?id=1n-PtMeWqPcqWm-VIZeKPX73Fr_7-kKsP" },
+            { id: 59, name: "マレイン酸", url: "https://drive.google.com/uc?id=1em_wSlTI1Yqlb0v2_6CsHbsoubcoPsfK" },
+            { id: 60, name: "ギ酸メチル", url: "https://drive.google.com/uc?id=1VDsxFdP2H0gENGLVaQKNI82J_TPW999t" },
+            { id: 61, name: "ギ酸エチル", url: "https://drive.google.com/uc?id=13XA16_FcKMwkAsIKZLNK66t0Gtncan5b" },
+            { id: 62, name: "酢酸メチル", url: "https://drive.google.com/uc?id=1lLEnHVhuPbhBTy_LSsNmwq-M63GK4vX6" },
+            { id: 63, name: "酢酸エチル", url: "https://drive.google.com/uc?id=1wtj8VfQClmn3oSLXSFbxJ80mVohAcpDY" },
+            { id: 64, name: "ニトログリセリン", url: "https://drive.google.com/uc?id=1ucWCMs6PLxxHv1gHf0jay4jQ19JV1JJp" },
+            { id: 65, name: "無水酢酸", url: "https://drive.google.com/uc?id=1vwwmjs8pot9IgWliT9Z_9E3Iq0qT-Q6c" },
+            { id: 66, name: "無水マレイン酸", url: "https://drive.google.com/uc?id=1Y77s0YNIcO0A9VlgiE12Mz09WmkYIeph" },
+            { id: 67, name: "ステアリン酸", url: "https://drive.google.com/uc?id=1VpuN8v9dWYNp6SBFjXQJV2lz3P74HuPp" },
+            { id: 68, name: "オレイン酸", url: "https://drive.google.com/uc?id=1AorSLuRzZVukm3tu9xN3ifFg3jlrNkxL" },
+            { id: 69, name: "リノール酸", url: "https://drive.google.com/uc?id=1ZQ-tGPuv-YxAcmBzmVe4YBuF_DQUCejW" },
+            { id: 70, name: "リノレン酸", url: "https://drive.google.com/uc?id=1fDP2ZMIt-Nfy9-c6YkScUnahe87FzB6C" },
+            { id: 71, name: "パルミチン酸", url: "https://drive.google.com/uc?id=1-PC9yIEf9xKySuteoMBHyMlwYKIjlmb-" },
+            { id: 72, name: "トルエン", url: "https://drive.google.com/uc?id=1chwCVv0x0nx3Ljs2Us9C6do2z4s6qc_-" },
+            { id: 73, name: "o-キシレン", url: "https://drive.google.com/uc?id=1vvSIPoASaLA1YnhHKKhqm4NpyewSEWyI" },
+            { id: 74, name: "m-キシレン", url: "https://drive.google.com/uc?id=1xBbpXrglhh1jFwxhcf5jcLn2GKKf1bw9" },
+            { id: 75, name: "p-キシレン", url: "https://drive.google.com/uc?id=1YbprW360oG3VX9bjNl1n6t8eJ6BtFX43" },
+            { id: 76, name: "ナフタレン", url: "https://drive.google.com/uc?id=1KmhaqmQqwjj62u5I2Bces9WCDDZW5JnR" },
+            { id: 77, name: "エチルベンゼン", url: "https://drive.google.com/uc?id=1dxxG5zkCEuhCVcC5Iq9neiMOHK10HrxJ" },
+            { id: 78, name: "スチレン", url: "https://drive.google.com/uc?id=1zkB1-129ywkhlhCfCqPCkP01jpI3Jkts" },
+            { id: 79, name: "アントラセン", url: "https://drive.google.com/uc?id=1bLmAsLWpBX1bU3HDLi2SPP3PkdRbaZL3" },
+            { id: 80, name: "ニトロベンゼン", url: "https://drive.google.com/uc?id=1299ipfDqC7IsoWjk3ZiiY6tkyJV3FjVF" },
+            { id: 81, name: "ベンゼンスルホン酸", url: "https://drive.google.com/uc?id=1dymAxReQn18wHoxFjxDKev6KevOxikk2" },
+            { id: 82, name: "ベンゼンスルホン酸ナトリウム", url: "https://drive.google.com/uc?id=14Io2aW8KqkzSePTbDBzda1qbSHAd8FvP" },
+            { id: 83, name: "クロロベンゼン", url: "https://drive.google.com/uc?id=1hJTiqbYOQ6eXjxzpuJIAiDXAlLBLi9ev" },
+            { id: 84, name: "ブロモベンゼン", url: "https://drive.google.com/uc?id=1WranYLAIfl62BrtCu53ZjDwLNjbe0YXF" },
+            { id: 85, name: "フェノール", url: "https://drive.google.com/uc?id=1KWv5mdo3MqNDhAocDnimV_28zHaHLO4-" },
+            { id: 86, name: "o-クレゾール", url: "https://drive.google.com/uc?id=1E9CXpDC8Fama-B_cEw-IyIBU99cR8HyM" },
+            { id: 87, name: "m-クレゾール", url: "https://drive.google.com/uc?id=1SbkDLX3iQ1v5BzRETv9-r3T74TtdwOhP" },
+            { id: 88, name: "p-クレゾール", url: "https://drive.google.com/uc?id=1Vo4ZLWuvX7KJJ6M4in5yK3LhdRRvvg7y" },
+            { id: 89, name: "2-ナフトール", url: "https://drive.google.com/uc?id=1lOIv8i5j7hUPUanbHYppuFAgV2c3E8TW" },
+            { id: 90, name: "1-ナフトール", url: "https://drive.google.com/uc?id=16pBQ1mbe6DDQGqRYn6oB8qXfcNOQfMzH" },
+            { id: 91, name: "サリチル酸", url: "https://drive.google.com/uc?id=1pK4QTYn-izGgWNnKykwUdAXq4Ui-q9m7" },
+            { id: 92, name: "ナトリウムフェノキシド", url: "https://drive.google.com/uc?id=1stULQIdzgq3-dtGXJTRxqx_zesQDqNlJ" },
+            { id: 93, name: "2,4,6-トリブロモフェノール", url: "https://drive.google.com/uc?id=1pI5k4uI28IDgWXVi7B5N7dEW08IumdO5" },
+            { id: 94, name: "ピクリン酸(2,4,6-トリニトロフェノール)", url: "https://drive.google.com/uc?id=1XaGFiK5PENRVqBlaC69e3G3e_OMnRAR7" },
+            { id: 95, name: "安息香酸", url: "https://drive.google.com/uc?id=1gMGVSqKspWzDedA0SXghz2c3inyg9djj" },
+            { id: 96, name: "フタル酸", url: "https://drive.google.com/uc?id=1N_rWbSkQyej74oE8op46m--FhDZMqQb9" },
+            { id: 97, name: "テレフタル酸", url: "https://drive.google.com/uc?id=1GAvORrAFlGV5oYQmt153C6Y4-QpEexAq" },
+            { id: 98, name: "ベンズアルデヒド", url: "https://drive.google.com/uc?id=1Uk5Ql8uUKKbf1gJzhN9coKLJBJq3anN6" },
+            { id: 99, name: "無水フタル酸", url: "https://drive.google.com/uc?id=1z7IXQ5IFp5TkVQgSIr6o5r5_S_W-Ozp9" },
+            { id: 100, name: "アセチルサリチル酸", url: "https://drive.google.com/uc?id=14K4Krkb2Dqf3DAm_-z4yXX4d4kWD0kG5" },
+            { id: 101, name: "サリチル酸メチル", url: "https://drive.google.com/uc?id=1-int_XRJBVsU0vIgZmpnXQY4P5N_osr9" },
+            { id: 102, name: "アニリン", url: "https://drive.google.com/uc?id=1GePbtEc1a1QjBKVFjeh41ABzw9lMjaKM" },
+            { id: 103, name: "アニリン塩酸塩", url: "https://drive.google.com/uc?id=1_pwuRWh5fZ2MLCivvrEClhYVbj3RiI2A" },
+            { id: 104, name: "アセトアニリド", url: "https://drive.google.com/uc?id=1cbUIx6RF5glFD2vv9tQdl_-EYuHRiThL" },
+            { id: 105, name: "塩化ベンゼンジアゾニウム", url: "https://drive.google.com/uc?id=1ndAdSMZ-2PW7cOepP4xR6od3kqa9cY0X" },
+            { id: 106, name: "p-ヒドロキシアゾベンゼン", url: "https://drive.google.com/uc?id=1mg5ToUTzj5HwpmaOTnYuZu55CY74zSLU" },
+            { id: 107, name: "1-フェニルアゾ-2-ナフトール", url: "https://drive.google.com/uc?id=1dSkKW-QhPlbZ1w9W0-O8nLo7RHcg6wDw" },
+            { id: 108, name: "2,4,6-トリニトロトルエン", url: "https://drive.google.com/uc?id=1VJ-CfAN2uishpm9wTZpCdwMsT-MST4h7" },
+            { id: 109, name: "クメン", url: "https://drive.google.com/uc?id=1fHsWsXlPIvd3x3bbxm86IbWoJY-KtiZb" },
+            { id: 110, name: "クメンヒドロペルオキシド", url: "https://drive.google.com/uc?id=1zzr3qIiIpeNwJMZgrG-RuQCQYu7s8d2b" },
+            { id: 111, name: "ベンゼン", url: "https://drive.google.com/uc?id=1JpKeyNXgIv0RXc2VntrWJCeoem-DatqZ" }
         ];
 
         // --- Helper: Convert Drive URL to Thumbnail URL for better stability ---
@@ -627,9 +647,6 @@
             const q = questions[currentIdx];
             if (showResult) return <div className="text-center p-10 font-bold text-2xl">集計中...</div>;
 
-            // Generate a unique key for the question image to force re-render
-            const questionImageKey = `q-img-${q.correct.id}-${currentIdx}`;
-
             return (
                 <div className={`max-w-2xl mx-auto bg-white rounded-3xl shadow-xl overflow-hidden ${selected === 'correct' ? 'correct-flash' : selected === 'wrong' ? 'wrong-flash' : ''}`}>
                     <div className="bg-gray-100 p-4 flex justify-between items-center">
@@ -646,7 +663,7 @@
                                 <div className="flex justify-center">
                                     <div className="bg-white border-2 border-gray-200 rounded-xl p-4 w-64 h-48 flex items-center justify-center overflow-hidden">
                                          <img 
-                                            key={questionImageKey} // Force re-render on question change
+                                            key={q.correct.url}
                                             src={q.correct.url} 
                                             alt="structure" 
                                             className="max-w-full max-h-full object-contain" 
@@ -666,7 +683,7 @@
                         <div className="grid grid-cols-2 gap-4">
                             {q.choices.map((choice, i) => (
                                 <button
-                                    key={`choice-${choice.id}-${currentIdx}`} // UNIQUE KEY IS CRITICAL HERE
+                                    key={choice.id}
                                     onClick={() => handleAnswer(choice)}
                                     disabled={selected !== null}
                                     className={`p-4 rounded-xl border-2 transition transform hover:scale-105 active:scale-95 flex items-center justify-center min-h-[80px]
@@ -680,7 +697,7 @@
                                     ) : (
                                         <div className="w-full h-24 flex items-center justify-center overflow-hidden">
                                             <img 
-                                                key={`c-img-${choice.id}`} // Force re-render
+                                                key={choice.url}
                                                 src={choice.url} 
                                                 alt="choice" 
                                                 className="max-w-full max-h-full object-contain" 
@@ -699,14 +716,11 @@
 
         const generateQuestions = (count) => {
             const questions = [];
-            // Use spread to clone array before shuffle to avoid side effects
             const all = shuffleArray([...COMPOUNDS]);
             
             for (let i = 0; i < count; i++) {
                 const correct = all[i];
-                // Clone array for filtering
                 const others = shuffleArray(COMPOUNDS.filter(c => c.id !== correct.id)).slice(0, 3);
-                // Create new array for choices
                 const choices = shuffleArray([correct, ...others]);
                 
                 questions.push({
@@ -725,12 +739,8 @@
 
             const startDrill = () => {
                 const newQuestions = generateQuestions(10);
-                if (newQuestions && newQuestions.length > 0) {
-                    setQuestions(newQuestions);
-                    setState('playing');
-                } else {
-                    alert("問題の生成に失敗しました。リロードしてください。");
-                }
+                setQuestions(newQuestions);
+                setState('playing');
             };
 
             const handleFinish = async (res) => {
@@ -855,7 +865,7 @@
         };
 
         const TeacherDashboard = ({ user, onBack }) => {
-            const [tab, setTab] = useState('tests'); // tests, data, students, batch
+            const [tab, setTab] = useState('tests'); // tests, data, batch, students
             const [sessions, setSessions] = useState([]);
             const [batchInput, setBatchInput] = useState("");
             
@@ -895,7 +905,6 @@
                 const userSnap = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, "users"));
                 let users = userSnap.docs.map(d => d.data()).filter(u => u.role === 'student');
                 
-                // Sort users by Class then Student Number
                 users.sort((a, b) => {
                     if (a.classId !== b.classId) return a.classId.localeCompare(b.classId);
                     return (parseInt(a.studentNumber) || 0) - (parseInt(b.studentNumber) || 0);
@@ -945,7 +954,6 @@
 
                 try {
                     for (const line of lines) {
-                        // Expected format: email,name,classId,studentNumber
                         const [email, name, classId, studentNumber] = line.split(',').map(s => s.trim());
                         if (email && name && classId) {
                             const ref = window.firebaseModules.doc(db, "pre_registrations", email);
@@ -954,11 +962,11 @@
                         }
                     }
                     await batch.commit();
-                    alert(`${count}件の生徒データを一括登録しました。生徒はログインするだけで登録が完了します。`);
+                    alert(`${count}件の生徒データを一括登録しました。`);
                     setBatchInput("");
                 } catch (e) {
                     console.error(e);
-                    alert("登録中にエラーが発生しました。" + e.message);
+                    alert("登録エラー: " + e.message);
                 }
             };
 
