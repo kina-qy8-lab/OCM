@@ -55,6 +55,12 @@
         .wrong-flash { animation: flashRed 0.5s; }
         @keyframes flashRed { 0%, 100% { background-color: white; } 50% { background-color: #fecaca; } }
 
+        /* Modal Animation */
+        .modal-enter { opacity: 0; transform: scale(0.9); }
+        .modal-enter-active { opacity: 1; transform: scale(1); transition: opacity 300ms, transform 300ms; }
+        .modal-exit { opacity: 1; transform: scale(1); }
+        .modal-exit-active { opacity: 0; transform: scale(0.9); transition: opacity 300ms, transform 300ms; }
+
         /* Custom Scrollbar */
         ::-webkit-scrollbar { width: 8px; }
         ::-webkit-scrollbar-track { background: #f1f1f1; }
@@ -241,6 +247,26 @@
             return array;
         };
 
+        // --- Modal Component ---
+        const Modal = ({ isOpen, onClose, title, children, footer }) => {
+            if (!isOpen) return null;
+            return (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-50 transition-opacity">
+                    <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden transform transition-all">
+                        <div className="p-6">
+                            <h3 className="text-xl font-bold text-gray-900 mb-4">{title}</h3>
+                            <div className="max-h-[60vh] overflow-y-auto">
+                                {children}
+                            </div>
+                        </div>
+                        <div className="bg-gray-50 px-6 py-4 flex justify-end gap-2">
+                            {footer ? footer : <button onClick={onClose} className="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300 font-bold text-gray-700">閉じる</button>}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
         // --- Components ---
 
         const Loading = () => (
@@ -278,96 +304,102 @@
             const [user, setUser] = useState(null);
             const [userData, setUserData] = useState(null);
             const [loading, setLoading] = useState(true);
-            const [view, setView] = useState("dashboard"); // dashboard, drill, test, teacher, test-list
+            const [view, setView] = useState("dashboard"); 
             const [activeSession, setActiveSession] = useState(null);
-            // 追試用ステート
             const [makeupSessions, setMakeupSessions] = useState([]);
             const [activeMakeupSession, setActiveMakeupSession] = useState(null);
-            const [sessionList, setSessionList] = useState([]); // テスト一覧保持用
+            const [sessionList, setSessionList] = useState([]);
+            
+            // Modal State
+            const [modalConfig, setModalConfig] = useState({ isOpen: false, title: "", content: null, footer: null });
+            
+            const openModal = (title, content, footer = null) => {
+                setModalConfig({ isOpen: true, title, content, footer });
+            };
+            const closeModal = () => {
+                setModalConfig({ ...modalConfig, isOpen: false });
+            };
 
-            // 共通データフェッチ関数（省エネのため手動または特定タイミングで呼び出し）
             const refreshData = async (uid, role, classId) => {
-                // 1. ユーザーデータ更新
                 const userSnap = await window.firebaseModules.getDoc(window.firebaseModules.doc(db, "users", uid));
                 if (userSnap.exists()) {
                     setUserData(userSnap.data());
                 }
 
-                // 2. 生徒かつトップ画面なら追試リスト更新
                 if (role === 'student') {
-                    // 終了したテストを取得（where句で絞り込み）
                     const q = window.firebaseModules.query(
                         window.firebaseModules.collection(db, "test_sessions"),
-                        window.firebaseModules.where("status", "==", "closed"),
-                        window.firebaseModules.where("targetClasses", "array-contains", classId)
+                        // 完了済みクラスに含まれているものを検索（単純化のためクライアントサイドフィルタ）
+                        window.firebaseModules.orderBy("startTime", "desc")
                     );
                     const snap = await window.firebaseModules.getDocs(q);
-                    const closedSessions = snap.docs.map(d => ({id: d.id, ...d.data()}));
                     
                     const needed = [];
-                    for (const s of closedSessions) {
-                        // 自分の結果を取得
-                        const resRef = window.firebaseModules.doc(db, "test_results", `${s.id}_${uid}`);
-                        const resSnap = await window.firebaseModules.getDoc(resRef);
-                        
-                        let needsMakeup = false;
-                        let lastAttempt = 0;
+                    for (const d of snap.docs) {
+                        const s = {id: d.id, ...d.data()};
+                        // 自分のクラスがターゲットで、かつそのクラスが完了済み(completedClasses)の場合、追試判定
+                        if (s.completedClasses && s.completedClasses.includes(classId)) {
+                            const resRef = window.firebaseModules.doc(db, "test_results", `${s.id}_${uid}`);
+                            const resSnap = await window.firebaseModules.getDoc(resRef);
+                            
+                            let needsMakeup = false;
+                            let lastAttempt = 0;
 
-                        if (!resSnap.exists()) {
-                            needsMakeup = true;
-                        } else {
-                            const resData = resSnap.data();
-                            // 不合格(8点未満) かつ 追試でまだ合格していない
-                            if (resData.score < 8 && !resData.makeupPassed) {
+                            if (!resSnap.exists()) {
                                 needsMakeup = true;
-                                if (resData.makeupHistory && resData.makeupHistory.length > 0) {
-                                     const last = resData.makeupHistory[resData.makeupHistory.length - 1];
-                                     if (last.timestamp) lastAttempt = last.timestamp.toMillis();
-                                } else if (resData.timestamp) {
-                                    lastAttempt = resData.timestamp.toMillis();
+                            } else {
+                                const resData = resSnap.data();
+                                if (resData.score < 8 && !resData.makeupPassed) {
+                                    needsMakeup = true;
+                                    if (resData.makeupHistory && resData.makeupHistory.length > 0) {
+                                         const last = resData.makeupHistory[resData.makeupHistory.length - 1];
+                                         if (last.timestamp) lastAttempt = last.timestamp.toMillis();
+                                    } else if (resData.timestamp) {
+                                        lastAttempt = resData.timestamp.toMillis();
+                                    }
                                 }
                             }
+                            if (needsMakeup) needed.push({ ...s, lastAttempt });
                         }
-                        if (needsMakeup) needed.push({ ...s, lastAttempt });
                     }
                     setMakeupSessions(needed);
                 }
             };
 
-            // Auth Listener
+            // Auth Listener with Auto-Migration Logic
             useEffect(() => {
                 const unsubscribe = window.firebaseModules.onAuthStateChanged(auth, async (currentUser) => {
                     setUser(currentUser);
                     if (currentUser) {
                         const userRef = window.firebaseModules.doc(db, "users", currentUser.uid);
-                        // 省エネ対策: onSnapshotではなくgetDocを使用
                         const userSnap = await window.firebaseModules.getDoc(userRef);
                         
                         if (userSnap.exists()) {
                             const data = userSnap.data();
                             setUserData(data);
-                            // 初期データロード
                             refreshData(currentUser.uid, data.role, data.classId);
                         } else {
-                            // Check for pre-registration
+                            // Migration Logic: Check users collection by email (created by batch)
                             if (currentUser.email) {
-                                const preRegRef = window.firebaseModules.doc(db, "pre_registrations", currentUser.email);
-                                const preRegSnap = await window.firebaseModules.getDoc(preRegRef);
+                                const emailRef = window.firebaseModules.doc(db, "users", currentUser.email);
+                                const emailSnap = await window.firebaseModules.getDoc(emailRef);
                                 
-                                if (preRegSnap.exists()) {
-                                    const preData = preRegSnap.data();
+                                if (emailSnap.exists()) {
+                                    // Found pre-registered data, migrate to uid document
+                                    const preData = emailSnap.data();
                                     const newData = {
+                                        ...preData,
                                         uid: currentUser.uid,
-                                        email: currentUser.email,
-                                        name: preData.name,
-                                        classId: preData.classId,
-                                        studentNumber: preData.studentNumber || "",
-                                        role: 'student',
+                                        email: currentUser.email, // Ensure email is set
                                         stamps: 0,
                                         drillStats: { attempts: 0, passes: 0 },
                                         createdAt: window.firebaseModules.serverTimestamp()
                                     };
+                                    // Save to new UID doc
                                     await window.firebaseModules.setDoc(userRef, newData);
+                                    // Delete old Email doc
+                                    await window.firebaseModules.deleteDoc(emailRef);
+                                    
                                     setUserData(newData);
                                 } else {
                                     setUserData(null);
@@ -384,7 +416,6 @@
                 return () => unsubscribe();
             }, []);
 
-            // ローカルUI更新用ヘルパー（再取得なしで画面反映）
             const updateLocalUserData = (updates) => {
                 setUserData(prev => {
                     if (!prev) return prev;
@@ -400,7 +431,6 @@
                 });
             };
 
-            // テスト一覧取得 (生徒がボタンを押した時のみ実行)
             const fetchActiveSessions = async () => {
                 if (!userData || userData.role !== 'student') return;
                 setLoading(true);
@@ -438,174 +468,216 @@
             };
 
             const startMakeup = (session) => {
-                // 24時間ロック判定
                 const now = Date.now();
                 const oneDay = 24 * 60 * 60 * 1000;
                 if (now - session.lastAttempt < oneDay) {
                     const waitHours = Math.ceil((oneDay - (now - session.lastAttempt)) / (60 * 60 * 1000));
-                    return alert(`前回の受験から24時間経過していません。\nあと約${waitHours}時間後に再受験可能です。`);
+                    return openModal("再受験不可", <p>前回の受験から24時間経過していません。<br/>あと約{waitHours}時間後に再受験可能です。</p>);
                 }
                 setActiveMakeupSession(session);
                 setView("makeup");
             };
 
+            const showRanking = async (sessionId, classIds) => {
+                setLoading(true);
+                // 結果取得
+                const q = window.firebaseModules.query(window.firebaseModules.collection(db, "test_results"), window.firebaseModules.where("sessionId", "==", sessionId));
+                const snap = await window.firebaseModules.getDocs(q);
+                let results = snap.docs.map(d => d.data());
+                
+                // クラスフィルタリング (指定がある場合)
+                if (classIds && classIds.length > 0) {
+                    results = results.filter(r => classIds.includes(r.classId));
+                }
+                
+                // 本試験の結果のみ(finished)
+                results = results.filter(r => r.status === 'finished');
+
+                // ソート: 点数降順 > タイム昇順
+                results.sort((a, b) => b.score - a.score || a.timeTaken - b.timeTaken);
+                
+                const top10 = results.slice(0, 10);
+                
+                setLoading(false);
+                openModal(
+                    "🏆 ランキング TOP10",
+                    <div className="space-y-2">
+                        {top10.length === 0 ? <p className="text-center text-gray-500">データがありません</p> : 
+                        top10.map((r, i) => (
+                            <div key={i} className={`flex justify-between items-center p-3 rounded-lg ${i < 3 ? 'bg-yellow-50 border border-yellow-200' : 'bg-gray-50'}`}>
+                                <div className="flex items-center gap-3">
+                                    <span className={`font-bold w-6 text-center ${i===0?'text-2xl':i===1?'text-xl':i===2?'text-lg':'text-gray-500'}`}>
+                                        {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : i + 1}
+                                    </span>
+                                    <div>
+                                        <div className="font-bold text-gray-800">{r.classId} {r.name}</div>
+                                        <div className="text-xs text-gray-500">Time: {r.timeTaken ? Math.floor(r.timeTaken) : '-'}s</div>
+                                    </div>
+                                </div>
+                                <div className="text-xl font-bold text-indigo-600">{r.score}点</div>
+                            </div>
+                        ))}
+                    </div>
+                );
+            };
+
             if (loading) return <Loading />;
 
-            if (!user) {
-                return <LoginScreen />;
-            }
-
-            if (!userData) {
-                return <RegistrationScreen onRegister={handleRegister} />;
-            }
-
-            if (view === "drill") return <DrillGame user={userData} updateLocalUserData={updateLocalUserData} onBack={() => setView("dashboard")} />;
-            if (view === "test-list") return (
-                <div className="min-h-screen bg-green-50 p-4">
-                    <div className="max-w-md mx-auto mt-10">
-                        <button onClick={() => setView("dashboard")} className="mb-4 text-gray-500 hover:underline">← 戻る</button>
-                        <h2 className="text-2xl font-bold mb-4">開催中のテスト</h2>
-                        {sessionList.length === 0 ? (
-                            <div className="bg-white p-8 rounded-xl shadow text-center text-gray-500">
-                                現在参加できるテストはありません。
-                            </div>
-                        ) : (
-                            <div className="space-y-4">
-                                {sessionList.map(s => (
-                                    <div key={s.id} className="bg-white p-6 rounded-xl shadow hover:shadow-md transition cursor-pointer"
-                                         onClick={() => { setActiveSession(s); setView("test"); }}>
-                                        <h3 className="text-xl font-bold text-gray-800">{s.name}</h3>
-                                        <p className="text-blue-500 font-bold mt-2">参加する →</p>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                </div>
-            );
-            if (view === "test") return <TestRunner user={userData} session={activeSession} onBack={() => { setView("dashboard"); refreshData(user.uid, userData.role, userData.classId); }} />;
-            if (view === "makeup") return <TestRunner user={userData} session={activeMakeupSession} isMakeup={true} onBack={() => { setView("dashboard"); setActiveMakeupSession(null); refreshData(user.uid, userData.role, userData.classId); }} />;
-            if (view === "teacher" && userData.role === 'teacher') return <TeacherDashboard user={userData} onBack={() => setView("dashboard")} />;
+            if (!user) return <LoginScreen openModal={openModal} />;
+            if (!userData) return <RegistrationScreen onRegister={handleRegister} openModal={openModal} />;
 
             return (
                 <div className="min-h-screen bg-green-50 p-4">
-                    <header className="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm mb-6 max-w-4xl mx-auto">
-                        <div>
-                            <h1 className="text-xl font-bold text-gray-800">Organic Chem Master</h1>
-                            <p className="text-sm text-gray-500">
-                                {userData.classId} {userData.studentNumber ? `No.${userData.studentNumber}` : ''} {userData.name} ({getRank(userData.stamps).name})
-                            </p>
-                        </div>
-                        <div className="flex gap-2 items-center">
-                             <button onClick={() => refreshData(user.uid, userData.role, userData.classId)} className="text-gray-400 hover:text-green-600 p-2" title="データを更新">
-                                🔄
-                             </button>
-                             {userData.role === 'teacher' && (
-                                <button onClick={() => setView("teacher")} className="bg-purple-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-purple-700 transition">
-                                    教員メニュー
-                                </button>
-                            )}
-                            <button onClick={handleLogout} className="text-gray-500 hover:text-red-500 px-3 py-2">
-                                ログアウト
-                            </button>
-                        </div>
-                    </header>
+                    <Modal isOpen={modalConfig.isOpen} onClose={closeModal} title={modalConfig.title} footer={modalConfig.footer}>
+                        {modalConfig.content}
+                    </Modal>
 
-                    <main className="max-w-4xl mx-auto grid md:grid-cols-2 gap-6">
-                        <div className="bg-white p-6 rounded-2xl shadow-lg">
-                            <h2 className="text-lg font-bold text-gray-700 mb-4 flex items-center">
-                                <span className="mr-2">🏆</span> スタンプカード
-                            </h2>
-                            {/* スタンプ表示数拡張: 100個まで */}
-                            <div className="flex flex-wrap gap-2 mb-4 h-64 overflow-y-auto content-start p-2 bg-gray-50 rounded-lg border-inner shadow-inner">
-                                {[...Array(Math.max(20, Math.min(100, userData.stamps + (5 - userData.stamps % 5))))].map((_, i) => (
-                                    <div key={i} className={`w-8 h-8 md:w-10 md:h-10 rounded-full flex items-center justify-center border-2 text-xs md:text-sm font-bold transition-all duration-300
-                                        ${i < userData.stamps ? 'border-yellow-400 bg-yellow-100 text-yellow-600 scale-100' : 'border-gray-200 text-gray-300 scale-90'}`}>
-                                        {i < userData.stamps ? '★' : i + 1}
+                    {view === "drill" && <DrillGame user={userData} updateLocalUserData={updateLocalUserData} onBack={() => setView("dashboard")} openModal={openModal} />}
+                    {view === "test-list" && (
+                        <div className="min-h-screen bg-green-50 p-4">
+                            <div className="max-w-md mx-auto mt-10">
+                                <button onClick={() => setView("dashboard")} className="mb-4 text-gray-500 hover:underline">← 戻る</button>
+                                <h2 className="text-2xl font-bold mb-4">開催中のテスト</h2>
+                                {sessionList.length === 0 ? (
+                                    <div className="bg-white p-8 rounded-xl shadow text-center text-gray-500">
+                                        現在参加できるテストはありません。
                                     </div>
-                                ))}
-                            </div>
-                            <div className="flex items-center justify-between">
-                                <div className={`px-3 py-1 rounded-full text-white text-sm font-bold ${getRank(userData.stamps).color}`}>
-                                    Rank: {getRank(userData.stamps).name}
-                                </div>
-                                <div className="text-sm text-gray-500">
-                                    合計: {userData.stamps}個
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="space-y-4">
-                            <button 
-                                onClick={() => setView("drill")}
-                                className="w-full bg-gradient-to-r from-green-400 to-green-600 hover:from-green-500 hover:to-green-700 text-white p-6 rounded-2xl shadow-lg transform transition hover:scale-105 flex flex-col items-center justify-center"
-                            >
-                                <span className="text-3xl mb-2">🧪</span>
-                                <span className="text-2xl font-bold">演習モード</span>
-                                <span className="text-sm opacity-90">ランダム10問に挑戦！スタンプGET</span>
-                            </button>
-
-                            <button 
-                                onClick={fetchActiveSessions}
-                                className="w-full bg-white border-2 border-indigo-100 text-indigo-600 p-6 rounded-2xl shadow-lg transform transition hover:scale-105 flex flex-col items-center justify-center hover:bg-indigo-50"
-                            >
-                                <span className="text-3xl mb-2">📝</span>
-                                <span className="text-2xl font-bold">テスト会場へ</span>
-                                <span className="text-sm opacity-90">開催中のテストを確認する</span>
-                            </button>
-                            
-                            {/* 追試セクション */}
-                            {makeupSessions.length > 0 && (
-                                <div className="bg-orange-50 border-l-4 border-orange-500 p-4 rounded-r-xl shadow-sm">
-                                    <h3 className="font-bold text-orange-700 mb-2 flex items-center">
-                                        <span className="mr-2">⚠️</span> 追試対象のテストがあります
-                                    </h3>
-                                    <div className="space-y-2">
-                                        {makeupSessions.map(s => {
-                                            const now = Date.now();
-                                            const oneDay = 24 * 60 * 60 * 1000;
-                                            const isLocked = now - s.lastAttempt < oneDay;
-                                            return (
-                                                <div key={s.id} className="flex justify-between items-center bg-white p-2 rounded shadow-sm">
-                                                    <span className="text-sm font-bold text-gray-700">{s.name}</span>
-                                                    <button 
-                                                        onClick={() => startMakeup(s)}
-                                                        className={`px-3 py-1 rounded text-xs font-bold ${isLocked ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-orange-500 text-white hover:bg-orange-600'}`}
-                                                    >
-                                                        {isLocked ? '待機中' : '受験する'}
-                                                    </button>
-                                                </div>
-                                            );
-                                        })}
+                                ) : (
+                                    <div className="space-y-4">
+                                        {sessionList.map(s => (
+                                            <div key={s.id} className="bg-white p-6 rounded-xl shadow hover:shadow-md transition cursor-pointer"
+                                                 onClick={() => { setActiveSession(s); setView("test"); }}>
+                                                <h3 className="text-xl font-bold text-gray-800">{s.name}</h3>
+                                                <p className="text-blue-500 font-bold mt-2">参加する →</p>
+                                            </div>
+                                        ))}
                                     </div>
-                                    <p className="text-xs text-orange-600 mt-2">※不合格の場合、再受験まで24時間必要です。</p>
-                                </div>
-                            )}
-
-                            <div className="bg-white p-4 rounded-xl shadow-sm">
-                                <h3 className="text-sm font-bold text-gray-500 mb-2">学習状況</h3>
-                                <div className="flex justify-between text-sm">
-                                    <span>演習回数: {userData.drillStats?.attempts || 0}回</span>
-                                    <span>合格率: {userData.drillStats?.attempts ? Math.round((userData.drillStats.passes / userData.drillStats.attempts) * 100) : 0}%</span>
-                                </div>
+                                )}
                             </div>
                         </div>
-                    </main>
+                    )}
+                    {view === "test" && <TestRunner user={userData} session={activeSession} onBack={() => { setView("dashboard"); refreshData(user.uid, userData.role, userData.classId); }} openModal={openModal} showRanking={showRanking} />}
+                    {view === "makeup" && <TestRunner user={userData} session={activeMakeupSession} isMakeup={true} onBack={() => { setView("dashboard"); setActiveMakeupSession(null); refreshData(user.uid, userData.role, userData.classId); }} openModal={openModal} />}
+                    {view === "teacher" && userData.role === 'teacher' && <TeacherDashboard user={userData} onBack={() => setView("dashboard")} openModal={openModal} showRanking={showRanking} />}
+                    
+                    {view === "dashboard" && (
+                        <div className="min-h-screen bg-green-50 p-4">
+                            <header className="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm mb-6 max-w-4xl mx-auto">
+                                <div>
+                                    <h1 className="text-xl font-bold text-gray-800">Organic Chem Master</h1>
+                                    <p className="text-sm text-gray-500">
+                                        {userData.classId} {userData.studentNumber ? `No.${userData.studentNumber}` : ''} {userData.name} ({getRank(userData.stamps).name})
+                                    </p>
+                                </div>
+                                <div className="flex gap-2 items-center">
+                                     <button onClick={() => refreshData(user.uid, userData.role, userData.classId)} className="text-gray-400 hover:text-green-600 p-2" title="データを更新">
+                                        🔄
+                                     </button>
+                                     {userData.role === 'teacher' && (
+                                        <button onClick={() => setView("teacher")} className="bg-purple-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-purple-700 transition">
+                                            教員メニュー
+                                        </button>
+                                    )}
+                                    <button onClick={handleLogout} className="text-gray-500 hover:text-red-500 px-3 py-2">
+                                        ログアウト
+                                    </button>
+                                </div>
+                            </header>
+
+                            <main className="max-w-4xl mx-auto grid md:grid-cols-2 gap-6">
+                                <div className="bg-white p-6 rounded-2xl shadow-lg">
+                                    <h2 className="text-lg font-bold text-gray-700 mb-4 flex items-center">
+                                        <span className="mr-2">🏆</span> スタンプカード
+                                    </h2>
+                                    <div className="flex flex-wrap gap-2 mb-4 h-64 overflow-y-auto content-start p-2 bg-gray-50 rounded-lg border-inner shadow-inner">
+                                        {[...Array(Math.max(20, Math.min(100, userData.stamps + (5 - userData.stamps % 5))))].map((_, i) => (
+                                            <div key={i} className={`w-8 h-8 md:w-10 md:h-10 rounded-full flex items-center justify-center border-2 text-xs md:text-sm font-bold transition-all duration-300
+                                                ${i < userData.stamps ? 'border-yellow-400 bg-yellow-100 text-yellow-600 scale-100' : 'border-gray-200 text-gray-300 scale-90'}`}>
+                                                {i < userData.stamps ? '★' : i + 1}
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <div className="flex items-center justify-between">
+                                        <div className={`px-3 py-1 rounded-full text-white text-sm font-bold ${getRank(userData.stamps).color}`}>
+                                            Rank: {getRank(userData.stamps).name}
+                                        </div>
+                                        <div className="text-sm text-gray-500">
+                                            合計: {userData.stamps}個
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="space-y-4">
+                                    <button 
+                                        onClick={() => setView("drill")}
+                                        className="w-full bg-gradient-to-r from-green-400 to-green-600 hover:from-green-500 hover:to-green-700 text-white p-6 rounded-2xl shadow-lg transform transition hover:scale-105 flex flex-col items-center justify-center"
+                                    >
+                                        <span className="text-3xl mb-2">🧪</span>
+                                        <span className="text-2xl font-bold">演習モード</span>
+                                        <span className="text-sm opacity-90">ランダム10問に挑戦！スタンプGET</span>
+                                    </button>
+
+                                    <button 
+                                        onClick={fetchActiveSessions}
+                                        className="w-full bg-white border-2 border-indigo-100 text-indigo-600 p-6 rounded-2xl shadow-lg transform transition hover:scale-105 flex flex-col items-center justify-center hover:bg-indigo-50"
+                                    >
+                                        <span className="text-3xl mb-2">📝</span>
+                                        <span className="text-2xl font-bold">テスト会場へ</span>
+                                        <span className="text-sm opacity-90">開催中のテストを確認する</span>
+                                    </button>
+                                    
+                                    {makeupSessions.length > 0 && (
+                                        <div className="bg-orange-50 border-l-4 border-orange-500 p-4 rounded-r-xl shadow-sm">
+                                            <h3 className="font-bold text-orange-700 mb-2 flex items-center">
+                                                <span className="mr-2">⚠️</span> 追試対象のテストがあります
+                                            </h3>
+                                            <div className="space-y-2">
+                                                {makeupSessions.map(s => {
+                                                    const now = Date.now();
+                                                    const oneDay = 24 * 60 * 60 * 1000;
+                                                    const isLocked = now - s.lastAttempt < oneDay;
+                                                    return (
+                                                        <div key={s.id} className="flex justify-between items-center bg-white p-2 rounded shadow-sm">
+                                                            <span className="text-sm font-bold text-gray-700">{s.name}</span>
+                                                            <button 
+                                                                onClick={() => startMakeup(s)}
+                                                                className={`px-3 py-1 rounded text-xs font-bold ${isLocked ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-orange-500 text-white hover:bg-orange-600'}`}
+                                                            >
+                                                                {isLocked ? '待機中' : '受験する'}
+                                                            </button>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                            <p className="text-xs text-orange-600 mt-2">※不合格の場合、再受験まで24時間必要です。</p>
+                                        </div>
+                                    )}
+
+                                    <div className="bg-white p-4 rounded-xl shadow-sm">
+                                        <h3 className="text-sm font-bold text-gray-500 mb-2">学習状況</h3>
+                                        <div className="flex justify-between text-sm">
+                                            <span>演習回数: {userData.drillStats?.attempts || 0}回</span>
+                                            <span>合格率: {userData.drillStats?.attempts ? Math.round((userData.drillStats.passes / userData.drillStats.attempts) * 100) : 0}%</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </main>
+                        </div>
+                    )}
                 </div>
             );
         };
 
         // --- Sub Components ---
-        // (LoginScreen, RegistrationScreen, Quiz は変更なし)
 
-        const LoginScreen = () => {
+        const LoginScreen = ({ openModal }) => {
             const handleGoogleLogin = async () => {
                 const provider = new window.firebaseModules.GoogleAuthProvider();
                 try {
                     await window.firebaseModules.signInWithPopup(auth, provider);
                 } catch (error) {
                     console.error("Login failed", error);
-                    alert("ログインエラー: " + error.message);
+                    openModal("エラー", <p>ログインに失敗しました。<br/>{error.message}</p>);
                 }
             };
             
@@ -613,7 +685,7 @@
                  try {
                     await window.firebaseModules.signInAnonymously(auth);
                 } catch (error) {
-                    alert("ゲストログインに失敗しました。");
+                    openModal("エラー", "ゲストログインに失敗しました。");
                 }
             };
 
@@ -648,7 +720,7 @@
             );
         };
 
-        const RegistrationScreen = ({ onRegister }) => {
+        const RegistrationScreen = ({ onRegister, openModal }) => {
             const [name, setName] = useState("");
             const [classId, setClassId] = useState("3-A");
             const [studentNumber, setStudentNumber] = useState("");
@@ -657,8 +729,8 @@
 
             const handleSubmit = (e) => {
                 e.preventDefault();
-                if (!name) return alert("名前を入力してください");
-                if (isTeacher && password !== "admin123") return alert("教員用パスワードが違います");
+                if (!name) return openModal("エラー", "名前を入力してください");
+                if (isTeacher && password !== "admin123") return openModal("エラー", "教員用パスワードが違います");
                 onRegister(name, classId, studentNumber, isTeacher);
             };
 
@@ -860,7 +932,7 @@
             return questions;
         };
 
-        const DrillGame = ({ user, updateLocalUserData, onBack }) => {
+        const DrillGame = ({ user, updateLocalUserData, onBack, openModal }) => {
             const [state, setState] = useState('ready');
             const [questions, setQuestions] = useState([]);
             const [result, setResult] = useState(null);
@@ -882,9 +954,7 @@
                 };
                 if (passed) updates.stamps = window.firebaseModules.increment(1);
                 
-                // 省エネ対策：サーバー更新と同時にローカルステートも更新（即時反映）
                 await window.firebaseModules.updateDoc(userRef, updates);
-                
                 updateLocalUserData({
                     stamps: passed ? 1 : 0,
                     drillStats: { attempts: 1, passes: passed ? 1 : 0 }
@@ -934,16 +1004,14 @@
             );
         };
 
-        const TestRunner = ({ user, session, isMakeup, onBack }) => {
+        const TestRunner = ({ user, session, isMakeup, onBack, openModal, showRanking }) => {
             const [status, setStatus] = useState('standby');
             const [questions, setQuestions] = useState([]);
-            const [rank, setRank] = useState(null);
             const [makeupResult, setMakeupResult] = useState(null);
             
             useEffect(() => {
                 if (!session) return;
                 
-                // 追試の場合: 即座にスタート
                 if (isMakeup) {
                     const sessionQs = session.questionSet.map(qData => {
                         const correct = COMPOUNDS.find(c => c.id === qData.correctId);
@@ -955,7 +1023,6 @@
                     return;
                 }
 
-                // 通常テスト: 待機画面でのみ参加登録と監視を行う
                 if (session.status === 'standby' || session.status === 'active') {
                     const joinSession = async () => {
                          const ref = window.firebaseModules.doc(db, "test_results", `${session.id}_${user.uid}`);
@@ -972,9 +1039,6 @@
                     joinSession();
                 }
 
-                // 監視: 待機中だけ onSnapshot を使う（開始シグナルを受け取るため）
-                // ただし今回は省エネのため、生徒側は「開始待ち」状態とし、先生が開始するとステータスが変わるのを検知したい。
-                // ドキュメント単体の監視ならコストは低い。
                 const sessionRef = window.firebaseModules.doc(db, "test_sessions", session.id);
                 const unsub = window.firebaseModules.onSnapshot(sessionRef, (snap) => {
                     const data = snap.data();
@@ -986,7 +1050,8 @@
                         });
                         setQuestions(sessionQs);
                         setStatus('active');
-                    } else if (data.status === 'closed') {
+                    } else if (data.status === 'created' && status === 'standby') {
+                        // Cancelled
                         onBack();
                     }
                 });
@@ -1002,25 +1067,13 @@
                     setMakeupResult({ score: res.score, passed });
                     
                     const resRef = window.firebaseModules.doc(db, "test_results", `${session.id}_${user.uid}`);
-                    // 履歴に追加
-                    const makeupRecord = {
-                        score: res.score,
-                        timestamp: window.firebaseModules.Timestamp.now()
-                    };
-                    
-                    const updateData = {
-                        makeupHistory: window.firebaseModules.arrayUnion(makeupRecord)
-                    };
-                    
-                    if (passed) {
-                        updateData.makeupPassed = true;
-                    }
-                    
+                    const makeupRecord = { score: res.score, timestamp: window.firebaseModules.Timestamp.now() };
+                    const updateData = { makeupHistory: window.firebaseModules.arrayUnion(makeupRecord) };
+                    if (passed) updateData.makeupPassed = true;
                     await window.firebaseModules.setDoc(resRef, updateData, { merge: true });
                     return;
                 }
 
-                // 通常テスト
                 await window.firebaseModules.setDoc(window.firebaseModules.doc(db, "test_results", `${session.id}_${user.uid}`), {
                     sessionId: session.id,
                     uid: user.uid,
@@ -1033,16 +1086,8 @@
                     timestamp: window.firebaseModules.serverTimestamp()
                 }, { merge: true });
                 
-                const q = window.firebaseModules.query(
-                    window.firebaseModules.collection(db, "test_results"), 
-                    window.firebaseModules.where("sessionId", "==", session.id),
-                    window.firebaseModules.where("status", "==", "finished")
-                );
-                // 順位表示も一度きりの取得にする
-                const snap = await window.firebaseModules.getDocs(q);
-                const results = snap.docs.map(d => d.data());
-                results.sort((a, b) => b.score - a.score || a.timeTaken - b.timeTaken);
-                setRank(results.findIndex(r => r.uid === user.uid) + 1);
+                // Show Ranking
+                showRanking(session.id);
             };
 
             return (
@@ -1072,7 +1117,7 @@
                             ) : (
                                 <div>
                                     <h2 className="text-2xl font-bold mb-4">テスト終了！</h2>
-                                    {rank ? <div className="text-5xl font-bold text-indigo-600 mb-2">{rank}位</div> : <div className="animate-pulse">集計中...</div>}
+                                    <p className="text-gray-600 mb-6">ランキングはモーダルで表示されています</p>
                                 </div>
                             )}
                             <button onClick={onBack} className="mt-8 w-full bg-gray-200 text-gray-700 py-3 rounded-xl hover:bg-gray-300">戻る</button>
@@ -1082,30 +1127,27 @@
             );
         };
 
-        const TeacherDashboard = ({ user, onBack }) => {
+        const TeacherDashboard = ({ user, onBack, openModal, showRanking }) => {
             const [tab, setTab] = useState('tests'); // tests, data, batch, students
             const [sessions, setSessions] = useState([]);
             const [batchInput, setBatchInput] = useState("");
             const [selectedClasses, setSelectedClasses] = useState(new Set());
             const [availableClasses, setAvailableClasses] = useState([]);
             
-            // CSV出力用ステート
-            const [csvType, setCsvType] = useState('score'); // score, status, drill
+            // CSV
+            const [csvType, setCsvType] = useState('score');
             const [targetCsvClasses, setTargetCsvClasses] = useState(new Set());
             const [isAllCsvClasses, setIsAllCsvClasses] = useState(true);
             
-            // データ監視とクラス一覧作成
             useEffect(() => {
                 const q = window.firebaseModules.query(
                     window.firebaseModules.collection(db, "test_sessions"),
                     window.firebaseModules.orderBy("startTime", "desc")
                 );
-                // 先生は管理用なのでリアルタイム更新を維持
                 const unsub = window.firebaseModules.onSnapshot(q, (snap) => {
                     setSessions(snap.docs.map(d => ({id: d.id, ...d.data()})));
                 });
                 
-                // 全生徒データからクラス一覧を作成（一度きり）
                 const fetchClasses = async () => {
                     const usersQ = window.firebaseModules.query(window.firebaseModules.collection(db, "users"), window.firebaseModules.where("role", "==", "student"));
                     const snap = await window.firebaseModules.getDocs(usersQ);
@@ -1121,6 +1163,25 @@
                 return () => unsub();
             }, []);
 
+            // Auto-Finish Logic
+            useEffect(() => {
+                sessions.forEach(s => {
+                    if (s.status === 'active') {
+                        // クライアント側でのタイムアウト処理（念の為）
+                        // サーバーサイドではないので、開いている教員画面のどれか1つがトリガーすればOKという甘い運用
+                        const elapsed = Date.now() - s.startTime.toMillis();
+                        if (elapsed > 65000) { // 65秒経過していたら強制終了
+                             closeSessionRound(s);
+                        } else {
+                            const timer = setTimeout(() => {
+                                closeSessionRound(s);
+                            }, 60000 - elapsed); // 残り時間
+                            return () => clearTimeout(timer);
+                        }
+                    }
+                });
+            }, [sessions]);
+
             const createSession = async () => {
                 const name = prompt("テスト名を入力してください（例：1学期中間テスト）");
                 if (!name) return;
@@ -1132,6 +1193,7 @@
                 await window.firebaseModules.addDoc(window.firebaseModules.collection(db, "test_sessions"), {
                     name,
                     targetClasses: [], 
+                    completedClasses: [],
                     status: 'created',
                     startTime: window.firebaseModules.serverTimestamp(),
                     questionSet: qs
@@ -1146,7 +1208,7 @@
             };
 
             const startStandby = async (session) => {
-                if (selectedClasses.size === 0) return alert("実施するクラスを選択してください");
+                if (selectedClasses.size === 0) return openModal("エラー", "実施するクラスを選択してください");
                 await window.firebaseModules.updateDoc(window.firebaseModules.doc(db, "test_sessions", session.id), { 
                     status: 'standby',
                     targetClasses: Array.from(selectedClasses)
@@ -1155,118 +1217,36 @@
             };
 
             const startTest = async (session) => {
-                if (!confirm("テストを開始しますか？生徒は一斉にスタートします。")) return;
+                if (!confirm("テストを開始しますか？1分後に自動終了します。")) return;
                 await window.firebaseModules.updateDoc(window.firebaseModules.doc(db, "test_sessions", session.id), { 
-                    status: 'active'
+                    status: 'active',
+                    startTime: window.firebaseModules.serverTimestamp() // 開始時間を記録
                 });
             };
 
-            const closeTest = async (session) => {
-                if (!confirm("テストを終了しますか？")) return;
+            const closeSessionRound = async (session) => {
+                // 現在のターゲットクラスを完了リストへ移動し、ステータスをCreatedに戻す
+                const completed = [...(session.completedClasses || []), ...session.targetClasses];
+                const currentTargets = session.targetClasses;
+                
                 await window.firebaseModules.updateDoc(window.firebaseModules.doc(db, "test_sessions", session.id), { 
-                    status: 'closed'
+                    status: 'created',
+                    targetClasses: [],
+                    completedClasses: completed
                 });
+                
+                // ランキング表示
+                showRanking(session.id, currentTargets);
             };
             
             const cancelTest = async (session) => {
-                 if (!confirm("待機を中止して作成状態に戻しますか？")) return;
+                 if (!confirm("待機を中止しますか？")) return;
                  await window.firebaseModules.updateDoc(window.firebaseModules.doc(db, "test_sessions", session.id), { 
                     status: 'created',
                     targetClasses: []
                 });
             };
 
-            // CSV Class Toggle
-            const toggleCsvClass = (classId) => {
-                const newSet = new Set(targetCsvClasses);
-                if (newSet.has(classId)) newSet.delete(classId);
-                else newSet.add(classId);
-                setTargetCsvClasses(newSet);
-                setIsAllCsvClasses(false);
-            };
-            
-            const toggleAllCsvClasses = () => {
-                setIsAllCsvClasses(!isAllCsvClasses);
-                setTargetCsvClasses(new Set());
-            };
-
-            const downloadCSV = async () => {
-                // データの取得
-                const userSnap = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, "users"));
-                let users = userSnap.docs.map(d => d.data()).filter(u => u.role === 'student');
-                
-                // クラスフィルタリング
-                if (!isAllCsvClasses) {
-                    users = users.filter(u => targetCsvClasses.has(u.classId));
-                }
-                
-                // ソート
-                users.sort((a, b) => {
-                    if (a.classId !== b.classId) return a.classId.localeCompare(b.classId);
-                    return (parseInt(a.studentNumber) || 0) - (parseInt(b.studentNumber) || 0);
-                });
-
-                let csv = "";
-
-                if (csvType === 'drill') {
-                    // 演習取り組みパターン
-                    csv = "クラス,出席番号,氏名,スタンプ数,演習実施回数,演習合格回数,演習合格率\n";
-                    users.forEach(u => {
-                        const rate = u.drillStats?.attempts ? ((u.drillStats.passes / u.drillStats.attempts) * 100).toFixed(1) : 0;
-                        csv += `${u.classId},${u.studentNumber || ""},${u.name},${u.stamps},${u.drillStats?.attempts || 0},${u.drillStats?.passes || 0},${rate}%\n`;
-                    });
-
-                } else {
-                    // テスト関連
-                    const resultSnap = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, "test_results"));
-                    const results = resultSnap.docs.map(d => d.data());
-                    const sessionSnap = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, "test_sessions"));
-                    // 古い順にソートして列にする
-                    const sessionList = sessionSnap.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b) => a.startTime?.toMillis() - b.startTime?.toMillis());
-
-                    csv = "クラス,出席番号,氏名";
-                    sessionList.forEach(s => csv += `,${s.name}`);
-                    csv += "\n";
-
-                    users.forEach(u => {
-                        let line = `${u.classId},${u.studentNumber || ""},${u.name}`;
-                        
-                        sessionList.forEach(s => {
-                            const res = results.find(r => r.uid === u.uid && r.sessionId === s.id);
-                            
-                            if (csvType === 'score') {
-                                // 点数出力
-                                if (res && res.status === 'finished') {
-                                    line += `,${res.score}`;
-                                } else {
-                                    line += ",-";
-                                }
-                            } else if (csvType === 'status') {
-                                // 合否ステータス出力
-                                if (!res) {
-                                    line += ",未受験";
-                                } else if (res.score >= 8) {
-                                    line += ",合格";
-                                } else if (res.makeupPassed) {
-                                    line += ",追試合格";
-                                } else {
-                                    line += ",不合格";
-                                }
-                            }
-                        });
-                        csv += line + "\n";
-                    });
-                }
-
-                const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csv], { type: 'text/csv;charset=utf-8;' });
-                const url = URL.createObjectURL(blob);
-                const link = document.createElement("a");
-                link.setAttribute("href", url);
-                link.setAttribute("download", `organic_chem_data_${csvType}.csv`);
-                link.click();
-            };
-
-            // ... (handleBatchRegister, clearStudents は変更なし)
             const handleBatchRegister = async () => {
                 const lines = batchInput.trim().split('\n');
                 const batch = window.firebaseModules.writeBatch(db);
@@ -1275,29 +1255,86 @@
                     for (const line of lines) {
                         const [email, name, classId, studentNumber] = line.split(',').map(s => s.trim());
                         if (email && name && classId) {
-                            const ref = window.firebaseModules.doc(db, "pre_registrations", email);
-                            batch.set(ref, { name, classId, studentNumber: studentNumber || "", email });
+                            // Usersコレクションに直接保存。キーはEmail。
+                            const ref = window.firebaseModules.doc(db, "users", email);
+                            batch.set(ref, { 
+                                name, 
+                                classId, 
+                                studentNumber: studentNumber || "", 
+                                email,
+                                role: 'student',
+                                isPreRegistered: true
+                            });
                             count++;
                         }
                     }
                     await batch.commit();
-                    alert(`${count}件の生徒データを一括登録しました。`);
+                    openModal("完了", `${count}件の生徒データを一括登録しました。`);
                     setBatchInput("");
                 } catch (e) {
                     console.error(e);
-                    alert("登録エラー: " + e.message);
+                    openModal("登録エラー", e.message);
                 }
+            };
+
+            // ... (Other functions like downloadCSV, toggleCsvClass, clearStudents are same logic)
+            const toggleCsvClass = (classId) => {
+                const newSet = new Set(targetCsvClasses);
+                if (newSet.has(classId)) newSet.delete(classId); else newSet.add(classId);
+                setTargetCsvClasses(newSet); setIsAllCsvClasses(false);
+            };
+            const toggleAllCsvClasses = () => { setIsAllCsvClasses(!isAllCsvClasses); setTargetCsvClasses(new Set()); };
+            const downloadCSV = async () => {
+                const userSnap = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, "users"));
+                let users = userSnap.docs.map(d => d.data()).filter(u => u.role === 'student');
+                if (!isAllCsvClasses) users = users.filter(u => targetCsvClasses.has(u.classId));
+                users.sort((a, b) => {
+                    if (a.classId !== b.classId) return a.classId.localeCompare(b.classId);
+                    return (parseInt(a.studentNumber) || 0) - (parseInt(b.studentNumber) || 0);
+                });
+                let csv = "";
+                if (csvType === 'drill') {
+                    csv = "クラス,出席番号,氏名,スタンプ数,演習実施回数,演習合格回数,演習合格率\n";
+                    users.forEach(u => {
+                        const rate = u.drillStats?.attempts ? ((u.drillStats.passes / u.drillStats.attempts) * 100).toFixed(1) : 0;
+                        csv += `${u.classId},${u.studentNumber || ""},${u.name},${u.stamps},${u.drillStats?.attempts || 0},${u.drillStats?.passes || 0},${rate}%\n`;
+                    });
+                } else {
+                    const resultSnap = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, "test_results"));
+                    const results = resultSnap.docs.map(d => d.data());
+                    const sessionSnap = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, "test_sessions"));
+                    const sessionList = sessionSnap.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b) => a.startTime?.toMillis() - b.startTime?.toMillis());
+                    csv = "クラス,出席番号,氏名";
+                    sessionList.forEach(s => csv += `,${s.name}`);
+                    csv += "\n";
+                    users.forEach(u => {
+                        let line = `${u.classId},${u.studentNumber || ""},${u.name}`;
+                        sessionList.forEach(s => {
+                            const res = results.find(r => r.uid === u.uid && r.sessionId === s.id);
+                            if (csvType === 'score') {
+                                if (res && res.status === 'finished') line += `,${res.score}`; else line += ",-";
+                            } else if (csvType === 'status') {
+                                if (!res) line += ",未受験"; else if (res.score >= 8) line += ",合格"; else if (res.makeupPassed) line += ",追試合格"; else line += ",不合格";
+                            }
+                        });
+                        csv += line + "\n";
+                    });
+                }
+                const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csv], { type: 'text/csv;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                link.setAttribute("href", url);
+                link.setAttribute("download", `organic_chem_data_${csvType}.csv`);
+                link.click();
             };
             const clearStudents = async () => {
                 if(!confirm("本当に全生徒データを削除しますか？")) return;
                 const snap = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, "users"));
                 const batch = window.firebaseModules.writeBatch(db);
                 let count = 0;
-                snap.forEach(d => {
-                    if (d.data().role === 'student') { batch.delete(d.ref); count++; }
-                });
+                snap.forEach(d => { if (d.data().role === 'student') { batch.delete(d.ref); count++; } });
                 await batch.commit();
-                alert(`${count}件削除しました。`);
+                openModal("削除完了", `${count}件削除しました。`);
             };
 
             return (
@@ -1310,11 +1347,7 @@
                     <div className="max-w-5xl mx-auto">
                         <div className="flex space-x-2 mb-6">
                             {['tests', 'data', 'batch', 'students'].map(t => (
-                                <button 
-                                    key={t}
-                                    onClick={() => setTab(t)}
-                                    className={`px-4 py-2 rounded-lg font-bold capitalize ${tab === t ? 'bg-purple-600 text-white' : 'bg-white text-purple-600'}`}
-                                >
+                                <button key={t} onClick={() => setTab(t)} className={`px-4 py-2 rounded-lg font-bold capitalize ${tab === t ? 'bg-purple-600 text-white' : 'bg-white text-purple-600'}`}>
                                     {t === 'tests' ? 'テスト実施' : t === 'data' ? 'データ出力' : t === 'batch' ? '生徒一括登録' : '生徒管理'}
                                 </button>
                             ))}
@@ -1322,78 +1355,73 @@
 
                         {tab === 'tests' && (
                             <div>
-                                <button onClick={createSession} className="mb-6 bg-purple-600 text-white px-6 py-3 rounded-xl shadow hover:bg-purple-700 font-bold">
-                                    ＋ 新規テストを作成
-                                </button>
+                                <button onClick={createSession} className="mb-6 bg-purple-600 text-white px-6 py-3 rounded-xl shadow hover:bg-purple-700 font-bold">＋ 新規テストを作成</button>
                                 <div className="grid gap-4">
                                     {sessions.map(s => (
-                                        <div key={s.id} className="bg-white p-6 rounded-xl shadow flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                                            <div>
-                                                <h3 className="font-bold text-lg">{s.name}</h3>
-                                                <div className="flex gap-2 mt-1">
-                                                     <span className={`inline-block px-2 py-1 text-xs rounded-full ${
-                                                        s.status === 'active' ? 'bg-red-100 text-red-600 animate-pulse' : 
-                                                        s.status === 'standby' ? 'bg-green-100 text-green-600' :
-                                                        s.status === 'created' ? 'bg-blue-100 text-blue-600' :
-                                                        'bg-gray-100 text-gray-500'
-                                                    }`}>
-                                                        {s.status === 'created' ? '未公開' : s.status === 'standby' ? '待機中' : s.status === 'active' ? '実施中' : '終了'}
-                                                    </span>
-                                                    {s.targetClasses && s.targetClasses.length > 0 && (
-                                                        <span className="text-xs text-gray-500 py-1">対象: {s.targetClasses.join(', ')}</span>
+                                        <div key={s.id} className="bg-white p-6 rounded-xl shadow flex flex-col gap-4">
+                                            <div className="flex justify-between items-start">
+                                                <div>
+                                                    <h3 className="font-bold text-lg">{s.name}</h3>
+                                                    <div className="flex gap-2 mt-1">
+                                                         <span className={`inline-block px-2 py-1 text-xs rounded-full ${s.status === 'active' ? 'bg-red-100 text-red-600 animate-pulse' : s.status === 'standby' ? 'bg-green-100 text-green-600' : 'bg-blue-100 text-blue-600'}`}>
+                                                            {s.status === 'created' ? '未公開' : s.status === 'standby' ? '待機中' : '実施中'}
+                                                        </span>
+                                                        {s.targetClasses && s.targetClasses.length > 0 && <span className="text-xs text-gray-500 py-1">今回対象: {s.targetClasses.join(', ')}</span>}
+                                                    </div>
+                                                </div>
+                                                <div className="flex flex-col items-end gap-2 w-full md:w-auto">
+                                                    {s.status === 'created' && (
+                                                        <div className="flex flex-col gap-2 items-end w-full">
+                                                            <div className="flex flex-wrap gap-2 justify-end">
+                                                                {availableClasses.map(cls => {
+                                                                    const isCompleted = s.completedClasses?.includes(cls);
+                                                                    return (
+                                                                        <label key={cls} className={`inline-flex items-center text-sm px-2 py-1 rounded border ${isCompleted ? 'bg-gray-200 text-gray-400 cursor-pointer' : 'bg-gray-50 cursor-pointer hover:bg-gray-100'}`}
+                                                                            onClick={isCompleted ? (e)=>{ e.preventDefault(); showRanking(s.id, [cls]); } : null}>
+                                                                            {isCompleted ? (
+                                                                                <span className="mr-1">✅ {cls} (済)</span>
+                                                                            ) : (
+                                                                                <>
+                                                                                    <input type="checkbox" className="mr-1" checked={selectedClasses.has(cls)} onChange={() => toggleClass(cls)}/>
+                                                                                    {cls}
+                                                                                </>
+                                                                            )}
+                                                                        </label>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                            <button onClick={() => startStandby(s)} className="bg-blue-500 text-white px-4 py-2 rounded shadow hover:bg-blue-600 w-full md:w-auto">待機状態にする</button>
+                                                        </div>
+                                                    )}
+                                                    {s.status === 'standby' && (
+                                                        <div className="flex items-center gap-4">
+                                                            <ParticipantCounter sessionId={s.id} />
+                                                            <button onClick={() => startTest(s)} className="bg-red-500 text-white px-4 py-2 rounded shadow hover:bg-red-600 font-bold animate-pulse">テスト開始！</button>
+                                                            <button onClick={() => cancelTest(s)} className="text-sm text-gray-400 underline">中止</button>
+                                                        </div>
+                                                    )}
+                                                    {s.status === 'active' && (
+                                                        <div className="flex items-center gap-4">
+                                                            <ParticipantCounter sessionId={s.id} />
+                                                            <span className="text-red-500 font-bold animate-pulse">実施中...自動終了まで待機</span>
+                                                            <button onClick={() => closeSessionRound(s)} className="bg-gray-800 text-white px-4 py-2 rounded shadow hover:bg-gray-900">強制終了</button>
+                                                        </div>
                                                     )}
                                                 </div>
                                             </div>
-                                            
-                                            <div className="flex flex-col items-end gap-2 w-full md:w-auto">
-                                                {/* ステータスごとの操作パネル */}
-                                                
-                                                {s.status === 'created' && (
-                                                    <div className="flex flex-col gap-2 items-end w-full">
-                                                        <div className="flex flex-wrap gap-2 justify-end">
-                                                            {/* 動的クラスリスト表示 */}
-                                                            {availableClasses.map(cls => (
-                                                                <label key={cls} className="inline-flex items-center text-sm bg-gray-50 px-2 py-1 rounded cursor-pointer hover:bg-gray-100">
-                                                                    <input type="checkbox" className="mr-1" 
-                                                                        checked={selectedClasses.has(cls)} 
-                                                                        onChange={() => toggleClass(cls)}
-                                                                    />
-                                                                    {cls}
-                                                                </label>
-                                                            ))}
-                                                            {availableClasses.length === 0 && <span className="text-xs text-gray-400">登録クラスなし</span>}
-                                                        </div>
-                                                        <button onClick={() => startStandby(s)} className="bg-blue-500 text-white px-4 py-2 rounded shadow hover:bg-blue-600 w-full md:w-auto">
-                                                            待機状態にする（生徒に公開）
-                                                        </button>
+                                            {/* 完了済みクラス一覧 */}
+                                            {s.completedClasses && s.completedClasses.length > 0 && (
+                                                <div className="border-t pt-2">
+                                                    <span className="text-xs text-gray-500">実施済み（クリックでランキング）: </span>
+                                                    <div className="flex flex-wrap gap-2 mt-1">
+                                                        {s.completedClasses.map(cls => (
+                                                            <span key={cls} onClick={() => showRanking(s.id, [cls])} className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded cursor-pointer hover:bg-gray-200">
+                                                                {cls} 📊
+                                                            </span>
+                                                        ))}
                                                     </div>
-                                                )}
-
-                                                {s.status === 'standby' && (
-                                                    <div className="flex items-center gap-4">
-                                                        <ParticipantCounter sessionId={s.id} />
-                                                        <button onClick={() => startTest(s)} className="bg-red-500 text-white px-4 py-2 rounded shadow hover:bg-red-600 font-bold animate-pulse">
-                                                            テスト開始！
-                                                        </button>
-                                                        <button onClick={() => cancelTest(s)} className="text-sm text-gray-400 underline">
-                                                            中止
-                                                        </button>
-                                                    </div>
-                                                )}
-
-                                                {s.status === 'active' && (
-                                                    <div className="flex items-center gap-4">
-                                                        <ParticipantCounter sessionId={s.id} />
-                                                        <button onClick={() => closeTest(s)} className="bg-gray-800 text-white px-4 py-2 rounded shadow hover:bg-gray-900">
-                                                            テスト終了
-                                                        </button>
-                                                    </div>
-                                                )}
-                                                
-                                                {s.status === 'closed' && (
-                                                     <div className="text-gray-400 text-sm font-bold">終了済み</div>
-                                                )}
-                                            </div>
+                                                </div>
+                                            )}
                                         </div>
                                     ))}
                                 </div>
@@ -1403,9 +1431,7 @@
                         {tab === 'data' && (
                             <div className="bg-white p-8 rounded-xl shadow">
                                 <h2 className="text-xl font-bold mb-6 text-center">成績データのエクスポート</h2>
-                                
                                 <div className="grid md:grid-cols-2 gap-8 mb-8">
-                                    {/* 出力タイプ選択 */}
                                     <div>
                                         <h3 className="font-bold mb-2 text-gray-700">1. 出力データを選択</h3>
                                         <div className="space-y-2">
@@ -1421,8 +1447,6 @@
                                             ))}
                                         </div>
                                     </div>
-
-                                    {/* クラス選択 */}
                                     <div>
                                         <h3 className="font-bold mb-2 text-gray-700">2. クラスを選択</h3>
                                         <div className="border border-gray-200 rounded p-4 h-48 overflow-y-auto">
@@ -1432,17 +1456,13 @@
                                             </label>
                                             {!isAllCsvClasses && availableClasses.map(cls => (
                                                 <label key={cls} className="flex items-center mb-1 ml-4">
-                                                    <input type="checkbox" className="mr-2" 
-                                                        checked={targetCsvClasses.has(cls)} 
-                                                        onChange={() => toggleCsvClass(cls)} 
-                                                    />
+                                                    <input type="checkbox" className="mr-2" checked={targetCsvClasses.has(cls)} onChange={() => toggleCsvClass(cls)} />
                                                     {cls}
                                                 </label>
                                             ))}
                                         </div>
                                     </div>
                                 </div>
-
                                 <div className="text-center">
                                     <button onClick={downloadCSV} className="bg-blue-600 text-white px-8 py-4 rounded-xl shadow-lg hover:bg-blue-700 font-bold w-full md:w-1/2">
                                         📥 CSVダウンロードを実行
@@ -1454,32 +1474,20 @@
                         {tab === 'batch' && (
                             <div className="bg-white p-8 rounded-xl shadow">
                                 <h2 className="text-xl font-bold mb-4">生徒の一括登録（事前名簿）</h2>
-                                <p className="text-sm text-gray-600 mb-4">
-                                    以下の形式でリストを入力してください。<br/>
-                                    ここで登録されたメールアドレスで生徒がログインすると、自動的に名前とクラスが設定されます。
-                                </p>
+                                <p className="text-sm text-gray-600 mb-4">以下の形式でリストを入力してください。<br/>ここで登録されたメールアドレスで生徒がログインすると、自動的に名前とクラスが設定されます。</p>
                                 <div className="bg-gray-100 p-4 rounded-lg mb-4 text-sm font-mono text-gray-600">
                                     student1@school.ed.jp, 山田 太郎, 3-A, 1<br/>
                                     student2@school.ed.jp, 鈴木 花子, 3-B, 15
                                 </div>
-                                <textarea 
-                                    className="w-full h-40 p-4 border rounded-lg mb-4 font-mono text-sm" 
-                                    placeholder="メールアドレス, 氏名, クラス, 出席番号 (改行区切り)"
-                                    value={batchInput}
-                                    onChange={(e) => setBatchInput(e.target.value)}
-                                />
-                                <button onClick={handleBatchRegister} className="bg-purple-600 text-white px-6 py-3 rounded-lg font-bold shadow hover:bg-purple-700">
-                                    一括登録を実行
-                                </button>
+                                <textarea className="w-full h-40 p-4 border rounded-lg mb-4 font-mono text-sm" placeholder="メールアドレス, 氏名, クラス, 出席番号 (改行区切り)" value={batchInput} onChange={(e) => setBatchInput(e.target.value)} />
+                                <button onClick={handleBatchRegister} className="bg-purple-600 text-white px-6 py-3 rounded-lg font-bold shadow hover:bg-purple-700">一括登録を実行</button>
                             </div>
                         )}
 
                         {tab === 'students' && (
                             <div className="bg-white p-8 rounded-xl shadow border-l-4 border-red-500">
                                 <h2 className="text-xl font-bold mb-4 text-red-600">危険な操作</h2>
-                                <button onClick={clearStudents} className="bg-red-100 text-red-600 border border-red-200 px-6 py-3 rounded-lg font-bold">
-                                    全生徒データを削除する
-                                </button>
+                                <button onClick={clearStudents} className="bg-red-100 text-red-600 border border-red-200 px-6 py-3 rounded-lg font-bold">全生徒データを削除する</button>
                             </div>
                         )}
                     </div>
