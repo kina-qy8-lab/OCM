@@ -663,6 +663,7 @@
                                 <div className="flex justify-center">
                                     <div className="bg-white border-2 border-gray-200 rounded-xl p-4 w-64 h-48 flex items-center justify-center overflow-hidden">
                                          <img 
+                                            key={q.correct.url}
                                             src={q.correct.url} 
                                             alt="structure" 
                                             className="max-w-full max-h-full object-contain" 
@@ -696,6 +697,7 @@
                                     ) : (
                                         <div className="w-full h-24 flex items-center justify-center overflow-hidden">
                                             <img 
+                                                key={choice.url}
                                                 src={choice.url} 
                                                 alt="choice" 
                                                 className="max-w-full max-h-full object-contain" 
