@@ -19,12 +19,12 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
         import { getAuth, signInWithPopup, GoogleAuthProvider, signInWithEmailAndPassword, createUserWithEmailAndPassword, signInAnonymously, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
-        import { getFirestore, collection, doc, setDoc, getDoc, getDocs, updateDoc, onSnapshot, addDoc, query, where, orderBy, serverTimestamp, writeBatch, deleteDoc, increment } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getFirestore, collection, doc, setDoc, getDoc, getDocs, updateDoc, onSnapshot, addDoc, query, where, orderBy, serverTimestamp, writeBatch, deleteDoc, increment, Timestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
         // Expose Firebase to window for React component to use
         window.firebaseModules = { 
             initializeApp, getAuth, signInWithPopup, GoogleAuthProvider, signInWithEmailAndPassword, createUserWithEmailAndPassword, signInAnonymously, onAuthStateChanged, signOut,
-            getFirestore, collection, doc, setDoc, getDoc, getDocs, updateDoc, onSnapshot, addDoc, query, where, orderBy, serverTimestamp, writeBatch, deleteDoc, increment
+            getFirestore, collection, doc, setDoc, getDoc, getDocs, updateDoc, onSnapshot, addDoc, query, where, orderBy, serverTimestamp, writeBatch, deleteDoc, increment, Timestamp
         };
     </script>
 
@@ -66,7 +66,7 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useRef, useMemo } = React;
+        const { useState, useEffect, useRef, useMemo, useCallback } = React;
 
         // --- Configuration & Data ---
         
@@ -278,8 +278,61 @@
             const [user, setUser] = useState(null);
             const [userData, setUserData] = useState(null);
             const [loading, setLoading] = useState(true);
-            const [view, setView] = useState("dashboard"); // dashboard, drill, test, teacher
+            const [view, setView] = useState("dashboard"); // dashboard, drill, test, teacher, test-list
             const [activeSession, setActiveSession] = useState(null);
+            // 追試用ステート
+            const [makeupSessions, setMakeupSessions] = useState([]);
+            const [activeMakeupSession, setActiveMakeupSession] = useState(null);
+            const [sessionList, setSessionList] = useState([]); // テスト一覧保持用
+
+            // 共通データフェッチ関数（省エネのため手動または特定タイミングで呼び出し）
+            const refreshData = async (uid, role, classId) => {
+                // 1. ユーザーデータ更新
+                const userSnap = await window.firebaseModules.getDoc(window.firebaseModules.doc(db, "users", uid));
+                if (userSnap.exists()) {
+                    setUserData(userSnap.data());
+                }
+
+                // 2. 生徒かつトップ画面なら追試リスト更新
+                if (role === 'student') {
+                    // 終了したテストを取得（where句で絞り込み）
+                    const q = window.firebaseModules.query(
+                        window.firebaseModules.collection(db, "test_sessions"),
+                        window.firebaseModules.where("status", "==", "closed"),
+                        window.firebaseModules.where("targetClasses", "array-contains", classId)
+                    );
+                    const snap = await window.firebaseModules.getDocs(q);
+                    const closedSessions = snap.docs.map(d => ({id: d.id, ...d.data()}));
+                    
+                    const needed = [];
+                    for (const s of closedSessions) {
+                        // 自分の結果を取得
+                        const resRef = window.firebaseModules.doc(db, "test_results", `${s.id}_${uid}`);
+                        const resSnap = await window.firebaseModules.getDoc(resRef);
+                        
+                        let needsMakeup = false;
+                        let lastAttempt = 0;
+
+                        if (!resSnap.exists()) {
+                            needsMakeup = true;
+                        } else {
+                            const resData = resSnap.data();
+                            // 不合格(8点未満) かつ 追試でまだ合格していない
+                            if (resData.score < 8 && !resData.makeupPassed) {
+                                needsMakeup = true;
+                                if (resData.makeupHistory && resData.makeupHistory.length > 0) {
+                                     const last = resData.makeupHistory[resData.makeupHistory.length - 1];
+                                     if (last.timestamp) lastAttempt = last.timestamp.toMillis();
+                                } else if (resData.timestamp) {
+                                    lastAttempt = resData.timestamp.toMillis();
+                                }
+                            }
+                        }
+                        if (needsMakeup) needed.push({ ...s, lastAttempt });
+                    }
+                    setMakeupSessions(needed);
+                }
+            };
 
             // Auth Listener
             useEffect(() => {
@@ -287,25 +340,28 @@
                     setUser(currentUser);
                     if (currentUser) {
                         const userRef = window.firebaseModules.doc(db, "users", currentUser.uid);
+                        // 省エネ対策: onSnapshotではなくgetDocを使用
                         const userSnap = await window.firebaseModules.getDoc(userRef);
                         
                         if (userSnap.exists()) {
-                            setUserData(userSnap.data());
+                            const data = userSnap.data();
+                            setUserData(data);
+                            // 初期データロード
+                            refreshData(currentUser.uid, data.role, data.classId);
                         } else {
-                            // Check for pre-registration (Batch registered by teacher)
+                            // Check for pre-registration
                             if (currentUser.email) {
                                 const preRegRef = window.firebaseModules.doc(db, "pre_registrations", currentUser.email);
                                 const preRegSnap = await window.firebaseModules.getDoc(preRegRef);
                                 
                                 if (preRegSnap.exists()) {
-                                    // Auto-register using pre-registered data
                                     const preData = preRegSnap.data();
                                     const newData = {
                                         uid: currentUser.uid,
                                         email: currentUser.email,
                                         name: preData.name,
                                         classId: preData.classId,
-                                        studentNumber: preData.studentNumber || "", // Add field from preData
+                                        studentNumber: preData.studentNumber || "",
                                         role: 'student',
                                         stamps: 0,
                                         drillStats: { attempts: 0, passes: 0 },
@@ -314,7 +370,6 @@
                                     await window.firebaseModules.setDoc(userRef, newData);
                                     setUserData(newData);
                                 } else {
-                                    // New user, wait for registration modal
                                     setUserData(null);
                                 }
                             } else {
@@ -329,27 +384,36 @@
                 return () => unsubscribe();
             }, []);
 
-            // Test Session Listener
-            useEffect(() => {
+            // ローカルUI更新用ヘルパー（再取得なしで画面反映）
+            const updateLocalUserData = (updates) => {
+                setUserData(prev => {
+                    if (!prev) return prev;
+                    const newData = { ...prev };
+                    if (updates.stamps) newData.stamps = (newData.stamps || 0) + updates.stamps;
+                    if (updates.drillStats) {
+                        newData.drillStats = {
+                            attempts: (newData.drillStats?.attempts || 0) + (updates.drillStats.attempts || 0),
+                            passes: (newData.drillStats?.passes || 0) + (updates.drillStats.passes || 0)
+                        };
+                    }
+                    return newData;
+                });
+            };
+
+            // テスト一覧取得 (生徒がボタンを押した時のみ実行)
+            const fetchActiveSessions = async () => {
                 if (!userData || userData.role !== 'student') return;
-                
+                setLoading(true);
                 const q = window.firebaseModules.query(
                     window.firebaseModules.collection(db, "test_sessions"),
                     window.firebaseModules.where("status", "in", ["active", "standby"]),
                     window.firebaseModules.where("targetClasses", "array-contains", userData.classId)
                 );
-
-                const unsubscribe = window.firebaseModules.onSnapshot(q, (snapshot) => {
-                    if (!snapshot.empty) {
-                        const session = snapshot.docs[0].data();
-                        session.id = snapshot.docs[0].id;
-                        setActiveSession(session);
-                    } else {
-                        setActiveSession(null);
-                    }
-                });
-                return () => unsubscribe();
-            }, [userData]);
+                const snap = await window.firebaseModules.getDocs(q);
+                setSessionList(snap.docs.map(d => ({id: d.id, ...d.data()})));
+                setLoading(false);
+                setView("test-list");
+            };
 
             const handleLogout = () => {
                 window.firebaseModules.signOut(auth);
@@ -363,7 +427,7 @@
                     email: user.email,
                     name,
                     classId,
-                    studentNumber: studentNumber || "", // Add field
+                    studentNumber: studentNumber || "",
                     role,
                     stamps: 0,
                     drillStats: { attempts: 0, passes: 0 },
@@ -371,6 +435,18 @@
                 };
                 await window.firebaseModules.setDoc(window.firebaseModules.doc(db, "users", user.uid), data);
                 setUserData(data);
+            };
+
+            const startMakeup = (session) => {
+                // 24時間ロック判定
+                const now = Date.now();
+                const oneDay = 24 * 60 * 60 * 1000;
+                if (now - session.lastAttempt < oneDay) {
+                    const waitHours = Math.ceil((oneDay - (now - session.lastAttempt)) / (60 * 60 * 1000));
+                    return alert(`前回の受験から24時間経過していません。\nあと約${waitHours}時間後に再受験可能です。`);
+                }
+                setActiveMakeupSession(session);
+                setView("makeup");
             };
 
             if (loading) return <Loading />;
@@ -383,8 +459,32 @@
                 return <RegistrationScreen onRegister={handleRegister} />;
             }
 
-            if (view === "drill") return <DrillGame user={userData} onBack={() => setView("dashboard")} />;
-            if (view === "test") return <TestRunner user={userData} session={activeSession} onBack={() => setView("dashboard")} />;
+            if (view === "drill") return <DrillGame user={userData} updateLocalUserData={updateLocalUserData} onBack={() => setView("dashboard")} />;
+            if (view === "test-list") return (
+                <div className="min-h-screen bg-green-50 p-4">
+                    <div className="max-w-md mx-auto mt-10">
+                        <button onClick={() => setView("dashboard")} className="mb-4 text-gray-500 hover:underline">← 戻る</button>
+                        <h2 className="text-2xl font-bold mb-4">開催中のテスト</h2>
+                        {sessionList.length === 0 ? (
+                            <div className="bg-white p-8 rounded-xl shadow text-center text-gray-500">
+                                現在参加できるテストはありません。
+                            </div>
+                        ) : (
+                            <div className="space-y-4">
+                                {sessionList.map(s => (
+                                    <div key={s.id} className="bg-white p-6 rounded-xl shadow hover:shadow-md transition cursor-pointer"
+                                         onClick={() => { setActiveSession(s); setView("test"); }}>
+                                        <h3 className="text-xl font-bold text-gray-800">{s.name}</h3>
+                                        <p className="text-blue-500 font-bold mt-2">参加する →</p>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+            if (view === "test") return <TestRunner user={userData} session={activeSession} onBack={() => { setView("dashboard"); refreshData(user.uid, userData.role, userData.classId); }} />;
+            if (view === "makeup") return <TestRunner user={userData} session={activeMakeupSession} isMakeup={true} onBack={() => { setView("dashboard"); setActiveMakeupSession(null); refreshData(user.uid, userData.role, userData.classId); }} />;
             if (view === "teacher" && userData.role === 'teacher') return <TeacherDashboard user={userData} onBack={() => setView("dashboard")} />;
 
             return (
@@ -396,7 +496,10 @@
                                 {userData.classId} {userData.studentNumber ? `No.${userData.studentNumber}` : ''} {userData.name} ({getRank(userData.stamps).name})
                             </p>
                         </div>
-                        <div className="flex gap-2">
+                        <div className="flex gap-2 items-center">
+                             <button onClick={() => refreshData(user.uid, userData.role, userData.classId)} className="text-gray-400 hover:text-green-600 p-2" title="データを更新">
+                                🔄
+                             </button>
                              {userData.role === 'teacher' && (
                                 <button onClick={() => setView("teacher")} className="bg-purple-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-purple-700 transition">
                                     教員メニュー
@@ -413,10 +516,11 @@
                             <h2 className="text-lg font-bold text-gray-700 mb-4 flex items-center">
                                 <span className="mr-2">🏆</span> スタンプカード
                             </h2>
-                            <div className="flex flex-wrap gap-2 mb-4 h-48 overflow-y-auto content-start p-2 bg-gray-50 rounded-lg">
-                                {[...Array(Math.max(20, userData.stamps + (5 - userData.stamps % 5)))].map((_, i) => (
-                                    <div key={i} className={`w-10 h-10 rounded-full flex items-center justify-center border-2 
-                                        ${i < userData.stamps ? 'border-yellow-400 bg-yellow-100 text-yellow-600' : 'border-gray-200 text-gray-300'}`}>
+                            {/* スタンプ表示数拡張: 100個まで */}
+                            <div className="flex flex-wrap gap-2 mb-4 h-64 overflow-y-auto content-start p-2 bg-gray-50 rounded-lg border-inner shadow-inner">
+                                {[...Array(Math.max(20, Math.min(100, userData.stamps + (5 - userData.stamps % 5))))].map((_, i) => (
+                                    <div key={i} className={`w-8 h-8 md:w-10 md:h-10 rounded-full flex items-center justify-center border-2 text-xs md:text-sm font-bold transition-all duration-300
+                                        ${i < userData.stamps ? 'border-yellow-400 bg-yellow-100 text-yellow-600 scale-100' : 'border-gray-200 text-gray-300 scale-90'}`}>
                                         {i < userData.stamps ? '★' : i + 1}
                                     </div>
                                 ))}
@@ -426,7 +530,7 @@
                                     Rank: {getRank(userData.stamps).name}
                                 </div>
                                 <div className="text-sm text-gray-500">
-                                    合計スタンプ: {userData.stamps}個
+                                    合計: {userData.stamps}個
                                 </div>
                             </div>
                         </div>
@@ -442,20 +546,42 @@
                             </button>
 
                             <button 
-                                onClick={() => activeSession && setView("test")}
-                                disabled={!activeSession}
-                                className={`w-full p-6 rounded-2xl shadow-lg transform transition flex flex-col items-center justify-center
-                                    ${activeSession 
-                                        ? 'bg-gradient-to-r from-red-400 to-red-600 text-white hover:scale-105 cursor-pointer animate-pulse' 
-                                        : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
+                                onClick={fetchActiveSessions}
+                                className="w-full bg-white border-2 border-indigo-100 text-indigo-600 p-6 rounded-2xl shadow-lg transform transition hover:scale-105 flex flex-col items-center justify-center hover:bg-indigo-50"
                             >
                                 <span className="text-3xl mb-2">📝</span>
-                                <span className="text-2xl font-bold">テストモード</span>
-                                <span className="text-sm opacity-90">
-                                    {activeSession ? "テストが実施されています！" : "現在実施されているテストはありません"}
-                                </span>
+                                <span className="text-2xl font-bold">テスト会場へ</span>
+                                <span className="text-sm opacity-90">開催中のテストを確認する</span>
                             </button>
                             
+                            {/* 追試セクション */}
+                            {makeupSessions.length > 0 && (
+                                <div className="bg-orange-50 border-l-4 border-orange-500 p-4 rounded-r-xl shadow-sm">
+                                    <h3 className="font-bold text-orange-700 mb-2 flex items-center">
+                                        <span className="mr-2">⚠️</span> 追試対象のテストがあります
+                                    </h3>
+                                    <div className="space-y-2">
+                                        {makeupSessions.map(s => {
+                                            const now = Date.now();
+                                            const oneDay = 24 * 60 * 60 * 1000;
+                                            const isLocked = now - s.lastAttempt < oneDay;
+                                            return (
+                                                <div key={s.id} className="flex justify-between items-center bg-white p-2 rounded shadow-sm">
+                                                    <span className="text-sm font-bold text-gray-700">{s.name}</span>
+                                                    <button 
+                                                        onClick={() => startMakeup(s)}
+                                                        className={`px-3 py-1 rounded text-xs font-bold ${isLocked ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-orange-500 text-white hover:bg-orange-600'}`}
+                                                    >
+                                                        {isLocked ? '待機中' : '受験する'}
+                                                    </button>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                    <p className="text-xs text-orange-600 mt-2">※不合格の場合、再受験まで24時間必要です。</p>
+                                </div>
+                            )}
+
                             <div className="bg-white p-4 rounded-xl shadow-sm">
                                 <h3 className="text-sm font-bold text-gray-500 mb-2">学習状況</h3>
                                 <div className="flex justify-between text-sm">
@@ -470,6 +596,7 @@
         };
 
         // --- Sub Components ---
+        // (LoginScreen, RegistrationScreen, Quiz は変更なし)
 
         const LoginScreen = () => {
             const handleGoogleLogin = async () => {
@@ -478,15 +605,7 @@
                     await window.firebaseModules.signInWithPopup(auth, provider);
                 } catch (error) {
                     console.error("Login failed", error);
-                    let msg = "ログインに失敗しました。";
-                    if (error.code === 'auth/configuration-not-found') {
-                        msg += "\n【エラー原因】Firebaseコンソールで「Googleログイン」が有効になっていません。\nAuthentication > Sign-in method でGoogleを有効にしてください。";
-                    } else if (error.code === 'auth/unauthorized-domain') {
-                        msg += `\n【重要：設定が必要です】\nこのサイトのドメイン(${window.location.hostname})が許可されていません。\n\nFirebaseコンソール > Authentication > Settings > 承認済みドメイン\nに「${window.location.hostname}」を追加してください。`;
-                    } else if (error.code === 'auth/popup-blocked') {
-                        msg += "\n【エラー原因】ポップアップがブロックされました。\nブラウザのアドレスバーにあるポップアップ設定から許可してください。";
-                    }
-                    alert(msg);
+                    alert("ログインエラー: " + error.message);
                 }
             };
             
@@ -512,13 +631,11 @@
                                 <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-6 h-6 mr-2" />
                                 Googleでログイン
                             </button>
-                            
                             <div className="relative flex py-2 items-center">
                                 <div className="flex-grow border-t border-gray-300"></div>
                                 <span className="flex-shrink-0 mx-4 text-gray-400 text-sm">または</span>
                                 <div className="flex-grow border-t border-gray-300"></div>
                             </div>
-                            
                             <button 
                                 onClick={handleGuestLogin}
                                 className="w-full bg-gray-600 text-white font-bold py-3 px-4 rounded-xl shadow-sm hover:bg-gray-700 flex items-center justify-center transition"
@@ -582,14 +699,12 @@
                                     placeholder="山田 太郎"
                                 />
                             </div>
-                            
                             <div className="pt-4 border-t">
                                 <label className="flex items-center space-x-2 text-sm text-gray-600">
                                     <input type="checkbox" checked={isTeacher} onChange={(e) => setIsTeacher(e.target.checked)} />
                                     <span>教員として登録する</span>
                                 </label>
                             </div>
-                            
                             {isTeacher && (
                                 <div>
                                     <label className="block text-sm font-bold text-gray-700 mb-1">管理者パスワード</label>
@@ -602,7 +717,6 @@
                                     />
                                 </div>
                             )}
-
                             <button type="submit" className="w-full bg-green-500 text-white font-bold py-3 rounded-xl hover:bg-green-600 transition">
                                 登録して開始
                             </button>
@@ -640,16 +754,13 @@
 
             const finishQuiz = (finalScore, finalAnswers) => {
                 setShowResult(true);
-                const timeTaken = timeLimit - (timeLeft > 0 ? timeLeft : 0);
                 onFinish({ score: finalScore, timeTaken: (Date.now() - startTime) / 1000, answers: finalAnswers });
             };
 
             const handleAnswer = (choice) => {
                 if (selected) return;
-
                 const isCorrect = choice.id === questions[currentIdx].correct.id;
                 setSelected(isCorrect ? 'correct' : 'wrong');
-                
                 const newScore = isCorrect ? score + 1 : score;
                 const newAnswers = [...answers, isCorrect];
                 setScore(newScore);
@@ -676,7 +787,6 @@
                             ⏱ {timeLeft}s
                         </div>
                     </div>
-
                     <div className="p-6 text-center">
                         {q.type === 'name-to-struct' ? (
                             <div className="mb-6">
@@ -700,7 +810,6 @@
                                 <h1 className="text-3xl font-bold text-gray-800 my-8">{q.correct.name}</h1>
                             </div>
                         )}
-
                         <div className="grid grid-cols-2 gap-4">
                             {q.choices.map((choice, i) => (
                                 <button
@@ -738,12 +847,10 @@
         const generateQuestions = (count) => {
             const questions = [];
             const all = shuffleArray([...COMPOUNDS]);
-            
             for (let i = 0; i < count; i++) {
                 const correct = all[i];
                 const others = shuffleArray(COMPOUNDS.filter(c => c.id !== correct.id)).slice(0, 3);
                 const choices = shuffleArray([correct, ...others]);
-                
                 questions.push({
                     correct,
                     choices,
@@ -753,7 +860,7 @@
             return questions;
         };
 
-        const DrillGame = ({ user, onBack }) => {
+        const DrillGame = ({ user, updateLocalUserData, onBack }) => {
             const [state, setState] = useState('ready');
             const [questions, setQuestions] = useState([]);
             const [result, setResult] = useState(null);
@@ -774,7 +881,14 @@
                     "drillStats.passes": passed ? window.firebaseModules.increment(1) : window.firebaseModules.increment(0)
                 };
                 if (passed) updates.stamps = window.firebaseModules.increment(1);
+                
+                // 省エネ対策：サーバー更新と同時にローカルステートも更新（即時反映）
                 await window.firebaseModules.updateDoc(userRef, updates);
+                
+                updateLocalUserData({
+                    stamps: passed ? 1 : 0,
+                    drillStats: { attempts: 1, passes: passed ? 1 : 0 }
+                });
             };
 
             return (
@@ -820,15 +934,28 @@
             );
         };
 
-        const TestRunner = ({ user, session, onBack }) => {
+        const TestRunner = ({ user, session, isMakeup, onBack }) => {
             const [status, setStatus] = useState('standby');
             const [questions, setQuestions] = useState([]);
             const [rank, setRank] = useState(null);
+            const [makeupResult, setMakeupResult] = useState(null);
             
             useEffect(() => {
                 if (!session) return;
                 
-                // 待機中または開始中に参加登録を行う
+                // 追試の場合: 即座にスタート
+                if (isMakeup) {
+                    const sessionQs = session.questionSet.map(qData => {
+                        const correct = COMPOUNDS.find(c => c.id === qData.correctId);
+                        const choices = qData.choiceIds.map(id => COMPOUNDS.find(c => c.id === id));
+                        return { correct, choices, type: qData.type };
+                    });
+                    setQuestions(sessionQs);
+                    setStatus('active');
+                    return;
+                }
+
+                // 通常テスト: 待機画面でのみ参加登録と監視を行う
                 if (session.status === 'standby' || session.status === 'active') {
                     const joinSession = async () => {
                          const ref = window.firebaseModules.doc(db, "test_results", `${session.id}_${user.uid}`);
@@ -838,28 +965,62 @@
                             name: user.name,
                             classId: user.classId,
                             studentNumber: user.studentNumber || "",
-                            status: 'joined', // 参加中ステータス
+                            status: 'joined', 
                             timestamp: window.firebaseModules.serverTimestamp()
                          }, { merge: true });
                     };
                     joinSession();
                 }
 
-                if (session.status === 'active' && status === 'standby') {
-                    const sessionQs = session.questionSet.map(qData => {
-                        const correct = COMPOUNDS.find(c => c.id === qData.correctId);
-                        const choices = qData.choiceIds.map(id => COMPOUNDS.find(c => c.id === id));
-                        return { correct, choices, type: qData.type };
-                    });
-                    setQuestions(sessionQs);
-                    setStatus('active');
-                } else if (session.status === 'closed') {
-                    onBack();
-                }
-            }, [session, status]);
+                // 監視: 待機中だけ onSnapshot を使う（開始シグナルを受け取るため）
+                // ただし今回は省エネのため、生徒側は「開始待ち」状態とし、先生が開始するとステータスが変わるのを検知したい。
+                // ドキュメント単体の監視ならコストは低い。
+                const sessionRef = window.firebaseModules.doc(db, "test_sessions", session.id);
+                const unsub = window.firebaseModules.onSnapshot(sessionRef, (snap) => {
+                    const data = snap.data();
+                    if (data.status === 'active' && status === 'standby') {
+                        const sessionQs = data.questionSet.map(qData => {
+                            const correct = COMPOUNDS.find(c => c.id === qData.correctId);
+                            const choices = qData.choiceIds.map(id => COMPOUNDS.find(c => c.id === id));
+                            return { correct, choices, type: qData.type };
+                        });
+                        setQuestions(sessionQs);
+                        setStatus('active');
+                    } else if (data.status === 'closed') {
+                        onBack();
+                    }
+                });
+                
+                return () => unsub();
+            }, [session, status, isMakeup]);
 
             const handleFinish = async (res) => {
                 setStatus('finished');
+                
+                if (isMakeup) {
+                    const passed = res.score >= 8;
+                    setMakeupResult({ score: res.score, passed });
+                    
+                    const resRef = window.firebaseModules.doc(db, "test_results", `${session.id}_${user.uid}`);
+                    // 履歴に追加
+                    const makeupRecord = {
+                        score: res.score,
+                        timestamp: window.firebaseModules.Timestamp.now()
+                    };
+                    
+                    const updateData = {
+                        makeupHistory: window.firebaseModules.arrayUnion(makeupRecord)
+                    };
+                    
+                    if (passed) {
+                        updateData.makeupPassed = true;
+                    }
+                    
+                    await window.firebaseModules.setDoc(resRef, updateData, { merge: true });
+                    return;
+                }
+
+                // 通常テスト
                 await window.firebaseModules.setDoc(window.firebaseModules.doc(db, "test_results", `${session.id}_${user.uid}`), {
                     sessionId: session.id,
                     uid: user.uid,
@@ -868,7 +1029,7 @@
                     studentNumber: user.studentNumber || "",
                     score: res.score,
                     timeTaken: res.timeTaken,
-                    status: 'finished', // 完了
+                    status: 'finished', 
                     timestamp: window.firebaseModules.serverTimestamp()
                 }, { merge: true });
                 
@@ -877,16 +1038,16 @@
                     window.firebaseModules.where("sessionId", "==", session.id),
                     window.firebaseModules.where("status", "==", "finished")
                 );
-                const unsubscribe = window.firebaseModules.onSnapshot(q, (snap) => {
-                    const results = snap.docs.map(d => d.data());
-                    results.sort((a, b) => b.score - a.score || a.timeTaken - b.timeTaken);
-                    setRank(results.findIndex(r => r.uid === user.uid) + 1);
-                });
+                // 順位表示も一度きりの取得にする
+                const snap = await window.firebaseModules.getDocs(q);
+                const results = snap.docs.map(d => d.data());
+                results.sort((a, b) => b.score - a.score || a.timeTaken - b.timeTaken);
+                setRank(results.findIndex(r => r.uid === user.uid) + 1);
             };
 
             return (
                 <div className="min-h-screen bg-indigo-50 p-4">
-                     {status === 'standby' && (
+                     {status === 'standby' && !isMakeup && (
                         <div className="flex flex-col items-center justify-center h-[80vh] text-center">
                             <div className="animate-pulse text-6xl mb-4">📡</div>
                             <h2 className="text-2xl font-bold text-indigo-900 mb-2">先生の合図を待っています...</h2>
@@ -898,8 +1059,22 @@
                     {status === 'active' && <Quiz mode="test" questions={questions} timeLimit={60} onFinish={handleFinish} />}
                     {status === 'finished' && (
                         <div className="max-w-md mx-auto mt-20 text-center bg-white p-8 rounded-3xl shadow-xl">
-                            <h2 className="text-2xl font-bold mb-4">テスト終了！</h2>
-                            {rank ? <div className="text-5xl font-bold text-indigo-600 mb-2">{rank}位</div> : <div className="animate-pulse">集計中...</div>}
+                            {isMakeup ? (
+                                <div>
+                                    <h2 className="text-2xl font-bold mb-4">追試終了</h2>
+                                    <div className={`text-5xl font-bold mb-4 ${makeupResult.passed ? 'text-green-600' : 'text-red-500'}`}>
+                                        {makeupResult.score}点
+                                    </div>
+                                    <div className="text-xl mb-6">
+                                        {makeupResult.passed ? "💮 合格！おめでとうございます！" : "💪 不合格... また明日挑戦してください"}
+                                    </div>
+                                </div>
+                            ) : (
+                                <div>
+                                    <h2 className="text-2xl font-bold mb-4">テスト終了！</h2>
+                                    {rank ? <div className="text-5xl font-bold text-indigo-600 mb-2">{rank}位</div> : <div className="animate-pulse">集計中...</div>}
+                                </div>
+                            )}
                             <button onClick={onBack} className="mt-8 w-full bg-gray-200 text-gray-700 py-3 rounded-xl hover:bg-gray-300">戻る</button>
                         </div>
                     )}
@@ -912,15 +1087,37 @@
             const [sessions, setSessions] = useState([]);
             const [batchInput, setBatchInput] = useState("");
             const [selectedClasses, setSelectedClasses] = useState(new Set());
+            const [availableClasses, setAvailableClasses] = useState([]);
             
+            // CSV出力用ステート
+            const [csvType, setCsvType] = useState('score'); // score, status, drill
+            const [targetCsvClasses, setTargetCsvClasses] = useState(new Set());
+            const [isAllCsvClasses, setIsAllCsvClasses] = useState(true);
+            
+            // データ監視とクラス一覧作成
             useEffect(() => {
                 const q = window.firebaseModules.query(
                     window.firebaseModules.collection(db, "test_sessions"),
                     window.firebaseModules.orderBy("startTime", "desc")
                 );
+                // 先生は管理用なのでリアルタイム更新を維持
                 const unsub = window.firebaseModules.onSnapshot(q, (snap) => {
                     setSessions(snap.docs.map(d => ({id: d.id, ...d.data()})));
                 });
+                
+                // 全生徒データからクラス一覧を作成（一度きり）
+                const fetchClasses = async () => {
+                    const usersQ = window.firebaseModules.query(window.firebaseModules.collection(db, "users"), window.firebaseModules.where("role", "==", "student"));
+                    const snap = await window.firebaseModules.getDocs(usersQ);
+                    const classes = new Set();
+                    snap.forEach(d => {
+                        const c = d.data().classId;
+                        if(c) classes.add(c);
+                    });
+                    setAvailableClasses(Array.from(classes).sort());
+                };
+                fetchClasses();
+
                 return () => unsub();
             }, []);
 
@@ -934,8 +1131,8 @@
                 }));
                 await window.firebaseModules.addDoc(window.firebaseModules.collection(db, "test_sessions"), {
                     name,
-                    targetClasses: [], // 初期は空
-                    status: 'created', // 作成直後はcreated
+                    targetClasses: [], 
+                    status: 'created',
                     startTime: window.firebaseModules.serverTimestamp(),
                     questionSet: qs
                 });
@@ -954,7 +1151,7 @@
                     status: 'standby',
                     targetClasses: Array.from(selectedClasses)
                 });
-                setSelectedClasses(new Set()); // リセット
+                setSelectedClasses(new Set()); 
             };
 
             const startTest = async (session) => {
@@ -979,57 +1176,101 @@
                 });
             };
 
+            // CSV Class Toggle
+            const toggleCsvClass = (classId) => {
+                const newSet = new Set(targetCsvClasses);
+                if (newSet.has(classId)) newSet.delete(classId);
+                else newSet.add(classId);
+                setTargetCsvClasses(newSet);
+                setIsAllCsvClasses(false);
+            };
+            
+            const toggleAllCsvClasses = () => {
+                setIsAllCsvClasses(!isAllCsvClasses);
+                setTargetCsvClasses(new Set());
+            };
+
             const downloadCSV = async () => {
+                // データの取得
                 const userSnap = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, "users"));
                 let users = userSnap.docs.map(d => d.data()).filter(u => u.role === 'student');
                 
+                // クラスフィルタリング
+                if (!isAllCsvClasses) {
+                    users = users.filter(u => targetCsvClasses.has(u.classId));
+                }
+                
+                // ソート
                 users.sort((a, b) => {
                     if (a.classId !== b.classId) return a.classId.localeCompare(b.classId);
                     return (parseInt(a.studentNumber) || 0) - (parseInt(b.studentNumber) || 0);
                 });
 
-                const resultSnap = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, "test_results"));
-                const results = resultSnap.docs.map(d => d.data());
-                const sessionSnap = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, "test_sessions"));
-                const sessionList = sessionSnap.docs.map(d => ({id: d.id, name: d.data().name}));
+                let csv = "";
 
-                let csv = "クラス,出席番号,氏名";
-                sessionList.forEach(s => csv += `,${s.name}`);
-                csv += ",スタンプ数,演習回数,演習合格数,,テスト平均,演習合格率\n";
-
-                users.forEach(u => {
-                    let line = `${u.classId},${u.studentNumber || ""},${u.name}`;
-                    let totalScore = 0;
-                    let testCount = 0;
-                    sessionList.forEach(s => {
-                        const res = results.find(r => r.uid === u.uid && r.sessionId === s.id);
-                        if (res && res.status === 'finished') {
-                            line += `,${res.score}`;
-                            totalScore += res.score;
-                            testCount++;
-                        } else {
-                            line += ",-";
-                        }
+                if (csvType === 'drill') {
+                    // 演習取り組みパターン
+                    csv = "クラス,出席番号,氏名,スタンプ数,演習実施回数,演習合格回数,演習合格率\n";
+                    users.forEach(u => {
+                        const rate = u.drillStats?.attempts ? ((u.drillStats.passes / u.drillStats.attempts) * 100).toFixed(1) : 0;
+                        csv += `${u.classId},${u.studentNumber || ""},${u.name},${u.stamps},${u.drillStats?.attempts || 0},${u.drillStats?.passes || 0},${rate}%\n`;
                     });
-                    const drillRate = u.drillStats?.attempts ? ((u.drillStats.passes / u.drillStats.attempts) * 100).toFixed(1) : 0;
-                    const testAvg = testCount ? (totalScore / testCount).toFixed(1) : 0;
-                    line += `,${u.stamps},${u.drillStats?.attempts || 0},${u.drillStats?.passes || 0},,${testAvg},${drillRate}%`;
-                    csv += line + "\n";
-                });
+
+                } else {
+                    // テスト関連
+                    const resultSnap = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, "test_results"));
+                    const results = resultSnap.docs.map(d => d.data());
+                    const sessionSnap = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, "test_sessions"));
+                    // 古い順にソートして列にする
+                    const sessionList = sessionSnap.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b) => a.startTime?.toMillis() - b.startTime?.toMillis());
+
+                    csv = "クラス,出席番号,氏名";
+                    sessionList.forEach(s => csv += `,${s.name}`);
+                    csv += "\n";
+
+                    users.forEach(u => {
+                        let line = `${u.classId},${u.studentNumber || ""},${u.name}`;
+                        
+                        sessionList.forEach(s => {
+                            const res = results.find(r => r.uid === u.uid && r.sessionId === s.id);
+                            
+                            if (csvType === 'score') {
+                                // 点数出力
+                                if (res && res.status === 'finished') {
+                                    line += `,${res.score}`;
+                                } else {
+                                    line += ",-";
+                                }
+                            } else if (csvType === 'status') {
+                                // 合否ステータス出力
+                                if (!res) {
+                                    line += ",未受験";
+                                } else if (res.score >= 8) {
+                                    line += ",合格";
+                                } else if (res.makeupPassed) {
+                                    line += ",追試合格";
+                                } else {
+                                    line += ",不合格";
+                                }
+                            }
+                        });
+                        csv += line + "\n";
+                    });
+                }
 
                 const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csv], { type: 'text/csv;charset=utf-8;' });
                 const url = URL.createObjectURL(blob);
                 const link = document.createElement("a");
                 link.setAttribute("href", url);
-                link.setAttribute("download", `organic_chem_data.csv`);
+                link.setAttribute("download", `organic_chem_data_${csvType}.csv`);
                 link.click();
             };
 
+            // ... (handleBatchRegister, clearStudents は変更なし)
             const handleBatchRegister = async () => {
                 const lines = batchInput.trim().split('\n');
                 const batch = window.firebaseModules.writeBatch(db);
                 let count = 0;
-
                 try {
                     for (const line of lines) {
                         const [email, name, classId, studentNumber] = line.split(',').map(s => s.trim());
@@ -1047,7 +1288,6 @@
                     alert("登録エラー: " + e.message);
                 }
             };
-
             const clearStudents = async () => {
                 if(!confirm("本当に全生徒データを削除しますか？")) return;
                 const snap = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, "users"));
@@ -1108,11 +1348,11 @@
                                             <div className="flex flex-col items-end gap-2 w-full md:w-auto">
                                                 {/* ステータスごとの操作パネル */}
                                                 
-                                                {/* 作成直後：クラス選択 -> 待機開始 */}
                                                 {s.status === 'created' && (
                                                     <div className="flex flex-col gap-2 items-end w-full">
                                                         <div className="flex flex-wrap gap-2 justify-end">
-                                                            {["3-A", "3-B", "3-C", "3-D", "3-E"].map(cls => (
+                                                            {/* 動的クラスリスト表示 */}
+                                                            {availableClasses.map(cls => (
                                                                 <label key={cls} className="inline-flex items-center text-sm bg-gray-50 px-2 py-1 rounded cursor-pointer hover:bg-gray-100">
                                                                     <input type="checkbox" className="mr-1" 
                                                                         checked={selectedClasses.has(cls)} 
@@ -1121,6 +1361,7 @@
                                                                     {cls}
                                                                 </label>
                                                             ))}
+                                                            {availableClasses.length === 0 && <span className="text-xs text-gray-400">登録クラスなし</span>}
                                                         </div>
                                                         <button onClick={() => startStandby(s)} className="bg-blue-500 text-white px-4 py-2 rounded shadow hover:bg-blue-600 w-full md:w-auto">
                                                             待機状態にする（生徒に公開）
@@ -1128,7 +1369,6 @@
                                                     </div>
                                                 )}
 
-                                                {/* 待機中：人数表示 -> 開始 */}
                                                 {s.status === 'standby' && (
                                                     <div className="flex items-center gap-4">
                                                         <ParticipantCounter sessionId={s.id} />
@@ -1141,7 +1381,6 @@
                                                     </div>
                                                 )}
 
-                                                {/* 実施中：終了 */}
                                                 {s.status === 'active' && (
                                                     <div className="flex items-center gap-4">
                                                         <ParticipantCounter sessionId={s.id} />
@@ -1149,6 +1388,10 @@
                                                             テスト終了
                                                         </button>
                                                     </div>
+                                                )}
+                                                
+                                                {s.status === 'closed' && (
+                                                     <div className="text-gray-400 text-sm font-bold">終了済み</div>
                                                 )}
                                             </div>
                                         </div>
@@ -1158,11 +1401,53 @@
                         )}
 
                         {tab === 'data' && (
-                            <div className="bg-white p-8 rounded-xl shadow text-center">
-                                <h2 className="text-xl font-bold mb-4">成績データのエクスポート</h2>
-                                <button onClick={downloadCSV} className="bg-blue-600 text-white px-8 py-4 rounded-xl shadow-lg hover:bg-blue-700 font-bold">
-                                    📥 CSVダウンロード
-                                </button>
+                            <div className="bg-white p-8 rounded-xl shadow">
+                                <h2 className="text-xl font-bold mb-6 text-center">成績データのエクスポート</h2>
+                                
+                                <div className="grid md:grid-cols-2 gap-8 mb-8">
+                                    {/* 出力タイプ選択 */}
+                                    <div>
+                                        <h3 className="font-bold mb-2 text-gray-700">1. 出力データを選択</h3>
+                                        <div className="space-y-2">
+                                            {[
+                                                { id: 'score', label: 'テスト成績 (点数一覧)' },
+                                                { id: 'status', label: 'テスト合否 (合格・追試・不合格)' },
+                                                { id: 'drill', label: '演習取り組み状況 (スタンプ等)' }
+                                            ].map(type => (
+                                                <label key={type.id} className={`flex items-center p-3 rounded border cursor-pointer ${csvType === type.id ? 'bg-blue-50 border-blue-500' : 'border-gray-200'}`}>
+                                                    <input type="radio" name="csvType" className="mr-3" checked={csvType === type.id} onChange={() => setCsvType(type.id)} />
+                                                    {type.label}
+                                                </label>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    {/* クラス選択 */}
+                                    <div>
+                                        <h3 className="font-bold mb-2 text-gray-700">2. クラスを選択</h3>
+                                        <div className="border border-gray-200 rounded p-4 h-48 overflow-y-auto">
+                                            <label className="flex items-center mb-2 font-bold border-b pb-2">
+                                                <input type="checkbox" className="mr-2" checked={isAllCsvClasses} onChange={toggleAllCsvClasses} />
+                                                全クラス一括出力
+                                            </label>
+                                            {!isAllCsvClasses && availableClasses.map(cls => (
+                                                <label key={cls} className="flex items-center mb-1 ml-4">
+                                                    <input type="checkbox" className="mr-2" 
+                                                        checked={targetCsvClasses.has(cls)} 
+                                                        onChange={() => toggleCsvClass(cls)} 
+                                                    />
+                                                    {cls}
+                                                </label>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="text-center">
+                                    <button onClick={downloadCSV} className="bg-blue-600 text-white px-8 py-4 rounded-xl shadow-lg hover:bg-blue-700 font-bold w-full md:w-1/2">
+                                        📥 CSVダウンロードを実行
+                                    </button>
+                                </div>
                             </div>
                         )}
 
