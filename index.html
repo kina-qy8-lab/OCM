@@ -373,29 +373,33 @@
             );
         };
 
-        // --- Session Timer Component ---
-        const SessionTimer = ({ startTime, duration = 60 }) => {
-            const [timeLeft, setTimeLeft] = useState(duration);
-
+        // --- Finished Counter Component (New) ---
+        const FinishedCounter = ({ sessionId, targetClasses }) => {
+            const [count, setCount] = useState(0);
+            
             useEffect(() => {
-                if (!startTime) return;
-                const interval = setInterval(() => {
-                    const now = Date.now();
-                    const start = startTime.toMillis();
-                    const elapsed = Math.floor((now - start) / 1000);
-                    const remaining = duration - elapsed;
-                    
-                    if (remaining <= 0) {
-                        setTimeLeft(0);
-                        clearInterval(interval);
-                    } else {
-                        setTimeLeft(remaining);
-                    }
-                }, 1000);
-                return () => clearInterval(interval);
-            }, [startTime, duration]);
-
-            return <span className="text-red-600 font-bold bg-red-100 px-3 py-1 rounded-full">残り時間: {timeLeft}秒</span>;
+                if (!targetClasses || targetClasses.length === 0) {
+                    setCount(0);
+                    return;
+                }
+                const q = window.firebaseModules.query(
+                    window.firebaseModules.collection(db, "test_results"),
+                    window.firebaseModules.where("sessionId", "==", sessionId),
+                    window.firebaseModules.where("status", "==", "finished"),
+                    window.firebaseModules.where("classId", "in", targetClasses)
+                );
+                const unsub = window.firebaseModules.onSnapshot(q, (snap) => {
+                    setCount(snap.size);
+                });
+                return () => unsub();
+            }, [sessionId, targetClasses]);
+            
+            return (
+                <div className="flex items-center text-green-600 font-bold bg-green-100 px-3 py-1 rounded-full">
+                    <span className="mr-2">✅</span>
+                    <span>完了: {count}名</span>
+                </div>
+            );
         };
 
         // --- Main App Component ---
@@ -569,10 +573,10 @@
 
             const startMakeup = (session) => {
                 const now = Date.now();
-                const oneDay = 24 * 60 * 60 * 1000;
+                const oneDay = 12 * 60 * 60 * 1000;
                 if (now - session.lastAttempt < oneDay) {
                     const waitHours = Math.ceil((oneDay - (now - session.lastAttempt)) / (60 * 60 * 1000));
-                    return openModal("再受験不可", <p>前回の受験から24時間経過していません。<br/>あと約{waitHours}時間後に再受験可能です。</p>);
+                    return openModal("再受験不可", <p>前回の受験から12時間経過していません。<br/>あと約{waitHours}時間後に再受験可能です。</p>);
                 }
                 setActiveMakeupSession(session);
                 setView("makeup");
@@ -734,7 +738,7 @@
                                             <div className="space-y-2">
                                                 {makeupSessions.map(s => {
                                                     const now = Date.now();
-                                                    const oneDay = 24 * 60 * 60 * 1000;
+                                                    const oneDay = 12 * 60 * 60 * 1000;
                                                     const isLocked = now - s.lastAttempt < oneDay;
                                                     return (
                                                         <div key={s.id} className="flex justify-between items-center bg-white p-2 rounded shadow-sm">
@@ -749,7 +753,7 @@
                                                     );
                                                 })}
                                             </div>
-                                            <p className="text-xs text-orange-600 mt-2">※不合格の場合、再受験まで24時間必要です。</p>
+                                            <p className="text-xs text-orange-600 mt-2">※不合格の場合、再受験まで12時間必要です。</p>
                                         </div>
                                     )}
 
@@ -793,8 +797,8 @@
                 <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-b from-green-50 to-green-100 p-4">
                     <div className="bg-white p-8 rounded-3xl shadow-xl max-w-md w-full text-center">
                         <div className="text-6xl mb-4">⚗️</div>
-                        <h1 className="text-3xl font-bold text-gray-800 mb-2">Organic Chem Master</h1>
-                        <p className="text-gray-500 mb-8">有機化合物の構造式をマスターしよう</p>
+                        <h1 className="text-3xl font-bold text-gray-800 mb-2">有機化合物マスター</h1>
+                        <p className="text-gray-500 mb-8">有機化合物の名称と構造式をマスターしよう</p>
                         <div className="space-y-3">
                             <button 
                                 onClick={handleGoogleLogin}
@@ -1174,6 +1178,7 @@
 
         const TestRunner = ({ user, session, isMakeup, onBack, openModal, showRanking }) => {
             const [status, setStatus] = useState('standby');
+            const [localStatus, setLocalStatus] = useState('standby'); // standby, active, waiting_rank, rank_ready
             const [questions, setQuestions] = useState([]);
             const [makeupResult, setMakeupResult] = useState(null);
             
@@ -1210,7 +1215,7 @@
                 const sessionRef = window.firebaseModules.doc(db, "test_sessions", session.id);
                 const unsub = window.firebaseModules.onSnapshot(sessionRef, (snap) => {
                     const data = snap.data();
-                    if (data.status === 'active' && status === 'standby') {
+                    if (data.status === 'active' && localStatus === 'standby') {
                         const sessionQs = data.questionSet.map(qData => {
                             const correct = COMPOUNDS.find(c => c.id === qData.correctId);
                             const choices = qData.choiceIds.map(id => COMPOUNDS.find(c => c.id === id));
@@ -1218,14 +1223,18 @@
                         });
                         setQuestions(sessionQs);
                         setStatus('active');
-                    } else if (data.status === 'created' && status === 'standby') {
-                        // Cancelled
+                        setLocalStatus('active');
+                    } else if (data.status === 'created' && localStatus === 'standby') {
                         onBack();
+                    } else if (data.status === 'closed') {
+                        if (localStatus === 'waiting_rank') {
+                            setLocalStatus('rank_ready');
+                        }
                     }
                 });
                 
                 return () => unsub();
-            }, [session, status, isMakeup]);
+            }, [session, localStatus, isMakeup]);
 
             const handleFinish = async (res) => {
                 setStatus('finished');
@@ -1254,8 +1263,7 @@
                     timestamp: window.firebaseModules.serverTimestamp()
                 }, { merge: true });
                 
-                // Show Ranking
-                showRanking(session.id);
+                setLocalStatus('waiting_rank');
             };
 
             return (
@@ -1281,14 +1289,29 @@
                                     <div className="text-xl mb-6">
                                         {makeupResult.passed ? "💮 合格！おめでとうございます！" : "💪 不合格... また明日挑戦してください"}
                                     </div>
+                                    <button onClick={onBack} className="mt-8 w-full bg-gray-200 text-gray-700 py-3 rounded-xl hover:bg-gray-300">戻る</button>
                                 </div>
                             ) : (
                                 <div>
-                                    <h2 className="text-2xl font-bold mb-4">テスト終了！</h2>
-                                    <p className="text-gray-600 mb-6">ランキングはモーダルで表示されています</p>
+                                    {localStatus === 'waiting_rank' ? (
+                                        <div>
+                                            <div className="animate-spin text-4xl mb-4">⏳</div>
+                                            <h2 className="text-xl font-bold mb-4">集計中...</h2>
+                                            <p className="text-gray-600">先生が結果を公開するまで<br/>このままお待ちください。</p>
+                                        </div>
+                                    ) : localStatus === 'rank_ready' ? (
+                                        <div>
+                                            <h2 className="text-2xl font-bold mb-4">結果発表！</h2>
+                                            <button onClick={() => showRanking(session.id)} className="w-full bg-indigo-600 text-white font-bold py-3 rounded-xl hover:bg-indigo-700 mb-4 shadow-lg">
+                                                🏆 ランキングを見る
+                                            </button>
+                                            <button onClick={onBack} className="w-full bg-gray-200 text-gray-700 py-3 rounded-xl hover:bg-gray-300">戻る</button>
+                                        </div>
+                                    ) : (
+                                        <div>読み込み中...</div>
+                                    )}
                                 </div>
                             )}
-                            <button onClick={onBack} className="mt-8 w-full bg-gray-200 text-gray-700 py-3 rounded-xl hover:bg-gray-300">戻る</button>
                         </div>
                     )}
                 </div>
@@ -1331,25 +1354,6 @@
                 return () => unsub();
             }, []);
 
-            // Auto-Finish Logic
-            useEffect(() => {
-                sessions.forEach(s => {
-                    if (s.status === 'active' && s.startTime) {
-                        // クライアント側でのタイムアウト処理（念の為）
-                        // サーバーサイドではないので、開いている教員画面のどれか1つがトリガーすればOKという甘い運用
-                        const elapsed = Date.now() - s.startTime.toMillis();
-                        if (elapsed > 65000) { // 65秒経過していたら強制終了
-                             closeSessionRound(s);
-                        } else {
-                            const timer = setTimeout(() => {
-                                closeSessionRound(s);
-                            }, 60000 - elapsed); // 残り時間
-                            return () => clearTimeout(timer);
-                        }
-                    }
-                });
-            }, [sessions]);
-
             const createSession = async () => {
                 const name = prompt("テスト名を入力してください（例：1学期中間テスト）");
                 if (!name) return;
@@ -1385,7 +1389,7 @@
             };
 
             const startTest = async (session) => {
-                if (!confirm("テストを開始しますか？1分後に自動終了します。")) return;
+                if (!confirm("テストを開始しますか？生徒は一斉にスタートします。")) return;
                 await window.firebaseModules.updateDoc(window.firebaseModules.doc(db, "test_sessions", session.id), { 
                     status: 'active',
                     startTime: window.firebaseModules.serverTimestamp() // 開始時間を記録
@@ -1393,18 +1397,36 @@
             };
 
             const closeSessionRound = async (session) => {
-                // 現在のターゲットクラスを完了リストへ移動し、ステータスをCreatedに戻す
+                if (!confirm("結果を公開してこのセッションを終了しますか？")) return;
+                
+                // 現在のターゲットクラスを完了リストへ移動し、ステータスをclosedにする（一時的に）
+                // その後、また別のクラスで実施するためにcreatedに戻すフローにするか、
+                // あるいはランキングを見せるために一度closedにして、ランキングモーダルを出した後にcreatedに戻すか。
+                // ここではシンプルに「今回のラウンド終了」として処理する。
+                
                 const completed = [...(session.completedClasses || []), ...session.targetClasses];
                 const currentTargets = session.targetClasses;
                 
+                // 生徒側にランキング公開シグナルを送るため closed にする
                 await window.firebaseModules.updateDoc(window.firebaseModules.doc(db, "test_sessions", session.id), { 
-                    status: 'created',
+                    status: 'closed',
                     targetClasses: [],
                     completedClasses: completed
                 });
                 
-                // ランキング表示
+                // 少し待ってからランキング表示（生徒側もこのタイミングで見れるようになる）
                 showRanking(session.id, currentTargets);
+                
+                // ※ 生徒がランキングを見た後どうするか？
+                // 現状の仕様では、生徒は戻るボタンで退出。
+                // 教員は、次のクラスのためにこのセッションを再利用したい場合は、
+                // ステータスがclosedのままだと一覧上「終了」に見えるが、
+                // 次のクラスを選択して「待機状態にする」アクションが必要。
+                // よって、このままでOK（closed状態からでも待機開始できるようにUI側で制御すればよい）。
+                // ただし、TeacherDashboardのUIロジックで closed の扱いを調整する必要がある。
+                // 今回の実装では、closedになったセッションは一覧で「実施済み」として表示され、
+                // そこから「再開（次のクラス用に待機）」ボタンなどを設けるのが親切だが、
+                // 既存ロジックに合わせて、closedになった瞬間に created と同様の「クラス選択＋待機開始」UIを表示するようにする。
             };
             
             const cancelTest = async (session) => {
@@ -1531,14 +1553,14 @@
                                                 <div>
                                                     <h3 className="font-bold text-lg">{s.name}</h3>
                                                     <div className="flex gap-2 mt-1">
-                                                         <span className={`inline-block px-2 py-1 text-xs rounded-full ${s.status === 'active' ? 'bg-red-100 text-red-600 animate-pulse' : s.status === 'standby' ? 'bg-green-100 text-green-600' : 'bg-blue-100 text-blue-600'}`}>
-                                                            {s.status === 'created' ? '未公開' : s.status === 'standby' ? '待機中' : '実施中'}
+                                                         <span className={`inline-block px-2 py-1 text-xs rounded-full ${s.status === 'active' ? 'bg-red-100 text-red-600 animate-pulse' : s.status === 'standby' ? 'bg-green-100 text-green-600' : s.status === 'closed' ? 'bg-gray-500 text-white' : 'bg-blue-100 text-blue-600'}`}>
+                                                            {s.status === 'created' ? '未公開' : s.status === 'standby' ? '待機中' : s.status === 'active' ? '実施中' : '公開中'}
                                                         </span>
                                                         {s.targetClasses && s.targetClasses.length > 0 && <span className="text-xs text-gray-500 py-1">今回対象: {s.targetClasses.join(', ')}</span>}
                                                     </div>
                                                 </div>
                                                 <div className="flex flex-col items-end gap-2 w-full md:w-auto">
-                                                    {s.status === 'created' && (
+                                                    {(s.status === 'created' || s.status === 'closed') && (
                                                         <div className="flex flex-col gap-2 items-end w-full">
                                                             <div className="flex flex-wrap gap-2 justify-end">
                                                                 {availableClasses.map(cls => {
@@ -1558,7 +1580,9 @@
                                                                     );
                                                                 })}
                                                             </div>
-                                                            <button onClick={() => startStandby(s)} className="bg-blue-500 text-white px-4 py-2 rounded shadow hover:bg-blue-600 w-full md:w-auto">待機状態にする</button>
+                                                            <button onClick={() => startStandby(s)} className="bg-blue-500 text-white px-4 py-2 rounded shadow hover:bg-blue-600 w-full md:w-auto">
+                                                                {s.status === 'closed' ? '別のクラスで再開' : '待機状態にする'}
+                                                            </button>
                                                         </div>
                                                     )}
                                                     {s.status === 'standby' && (
@@ -1570,10 +1594,10 @@
                                                     )}
                                                     {s.status === 'active' && (
                                                         <div className="flex items-center gap-4">
-                                                            <SessionTimer startTime={s.startTime} />
-                                                            <ParticipantCounter sessionId={s.id} targetClasses={s.targetClasses} />
-                                                            <span className="text-red-500 font-bold animate-pulse">実施中...</span>
-                                                            <button onClick={() => closeSessionRound(s)} className="bg-gray-800 text-white px-4 py-2 rounded shadow hover:bg-gray-900">強制終了</button>
+                                                            <FinishedCounter sessionId={s.id} targetClasses={s.targetClasses} />
+                                                            <button onClick={() => closeSessionRound(s)} className="bg-orange-500 text-white px-4 py-2 rounded shadow hover:bg-orange-600 font-bold">
+                                                                📊 結果を公開して終了
+                                                            </button>
                                                         </div>
                                                     )}
                                                 </div>
