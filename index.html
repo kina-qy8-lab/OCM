@@ -1166,7 +1166,7 @@
             // Auto-Finish Logic
             useEffect(() => {
                 sessions.forEach(s => {
-                    if (s.status === 'active') {
+                    if (s.status === 'active' && s.startTime) {
                         // クライアント側でのタイムアウト処理（念の為）
                         // サーバーサイドではないので、開いている教員画面のどれか1つがトリガーすればOKという甘い運用
                         const elapsed = Date.now() - s.startTime.toMillis();
@@ -1303,7 +1303,7 @@
                     const resultSnap = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, "test_results"));
                     const results = resultSnap.docs.map(d => d.data());
                     const sessionSnap = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, "test_sessions"));
-                    const sessionList = sessionSnap.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b) => a.startTime?.toMillis() - b.startTime?.toMillis());
+                    const sessionList = sessionSnap.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b) => (a.startTime?.toMillis() || 0) - (b.startTime?.toMillis() || 0));
                     csv = "クラス,出席番号,氏名";
                     sessionList.forEach(s => csv += `,${s.name}`);
                     csv += "\n";
