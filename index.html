@@ -286,9 +286,26 @@
         }));
 
         // --- Firebase Initialization ---
-        const app = window.firebaseModules.initializeApp(firebaseConfig);
-        const auth = window.firebaseModules.getAuth(app);
-        const db = window.firebaseModules.getFirestore(app);
+        // Safety check for Firebase loading
+        const initializeFirebase = () => {
+            if (typeof window.firebaseModules === 'undefined') {
+                console.error("Firebase SDK not loaded");
+                return null;
+            }
+            try {
+                const app = window.firebaseModules.initializeApp(firebaseConfig);
+                const auth = window.firebaseModules.getAuth(app);
+                const db = window.firebaseModules.getFirestore(app);
+                return { app, auth, db };
+            } catch (e) {
+                console.error("Firebase Init Error:", e);
+                return null;
+            }
+        };
+
+        const fb = initializeFirebase();
+        const auth = fb ? fb.auth : null;
+        const db = fb ? fb.db : null;
         
         // --- Utils ---
         const RANKS = [
@@ -349,7 +366,7 @@
             const [count, setCount] = useState(0);
             
             useEffect(() => {
-                if (!targetClasses || targetClasses.length === 0) {
+                if (!targetClasses || targetClasses.length === 0 || !db) {
                     setCount(0);
                     return;
                 }
@@ -373,12 +390,12 @@
             );
         };
 
-        // --- Finished Counter Component (New) ---
+        // --- Finished Counter Component ---
         const FinishedCounter = ({ sessionId, targetClasses }) => {
             const [count, setCount] = useState(0);
             
             useEffect(() => {
-                if (!targetClasses || targetClasses.length === 0) {
+                if (!targetClasses || targetClasses.length === 0 || !db) {
                     setCount(0);
                     return;
                 }
@@ -413,10 +430,28 @@
             const [makeupSessions, setMakeupSessions] = useState([]);
             const [activeMakeupSession, setActiveMakeupSession] = useState(null);
             const [sessionList, setSessionList] = useState([]);
+            const [isGuest, setIsGuest] = useState(false);
             
             // Modal State
             const [modalConfig, setModalConfig] = useState({ isOpen: false, title: "", content: null, footer: null });
             
+            // Error Boundary check
+            if (!fb) {
+                return (
+                    <div className="min-h-screen flex flex-col items-center justify-center bg-gray-100 p-4 text-center">
+                        <div className="text-6xl mb-4">⚠️</div>
+                        <h1 className="text-2xl font-bold text-gray-800 mb-2">通信エラー</h1>
+                        <p className="text-gray-600">
+                            Firebaseの読み込みに失敗しました。<br/>
+                            インターネット接続を確認して、再読み込みしてください。
+                        </p>
+                        <button onClick={() => window.location.reload()} className="mt-6 bg-blue-600 text-white px-6 py-3 rounded-lg font-bold">
+                            再読み込み
+                        </button>
+                    </div>
+                );
+            }
+
             const openModal = (title, content, footer = null) => {
                 setModalConfig({ isOpen: true, title, content, footer });
             };
@@ -425,6 +460,7 @@
             };
 
             const refreshData = async (uid, role, classId) => {
+                if (isGuest) return;
                 const userSnap = await window.firebaseModules.getDoc(window.firebaseModules.doc(db, "users", uid));
                 if (userSnap.exists()) {
                     setUserData(userSnap.data());
@@ -433,7 +469,6 @@
                 if (role === 'student') {
                     const q = window.firebaseModules.query(
                         window.firebaseModules.collection(db, "test_sessions"),
-                        // 完了済みクラスに含まれているものを検索（単純化のためクライアントサイドフィルタ）
                         window.firebaseModules.orderBy("startTime", "desc")
                     );
                     const snap = await window.firebaseModules.getDocs(q);
@@ -441,7 +476,6 @@
                     const needed = [];
                     for (const d of snap.docs) {
                         const s = {id: d.id, ...d.data()};
-                        // 自分のクラスがターゲットで、かつそのクラスが完了済み(completedClasses)の場合、追試判定
                         if (s.completedClasses && s.completedClasses.includes(classId)) {
                             const resRef = window.firebaseModules.doc(db, "test_results", `${s.id}_${uid}`);
                             const resSnap = await window.firebaseModules.getDoc(resRef);
@@ -472,6 +506,10 @@
 
             // Auth Listener with Auto-Migration Logic
             useEffect(() => {
+                if (isGuest) {
+                    setLoading(false);
+                    return;
+                }
                 const unsubscribe = window.firebaseModules.onAuthStateChanged(auth, async (currentUser) => {
                     setUser(currentUser);
                     if (currentUser) {
@@ -483,27 +521,22 @@
                             setUserData(data);
                             refreshData(currentUser.uid, data.role, data.classId);
                         } else {
-                            // Migration Logic: Check users collection by email (created by batch)
                             if (currentUser.email) {
                                 const emailRef = window.firebaseModules.doc(db, "users", currentUser.email);
                                 const emailSnap = await window.firebaseModules.getDoc(emailRef);
                                 
                                 if (emailSnap.exists()) {
-                                    // Found pre-registered data, migrate to uid document
                                     const preData = emailSnap.data();
                                     const newData = {
                                         ...preData,
                                         uid: currentUser.uid,
-                                        email: currentUser.email, // Ensure email is set
+                                        email: currentUser.email,
                                         stamps: 0,
                                         drillStats: { attempts: 0, passes: 0 },
                                         createdAt: window.firebaseModules.serverTimestamp()
                                     };
-                                    // Save to new UID doc
                                     await window.firebaseModules.setDoc(userRef, newData);
-                                    // Delete old Email doc
                                     await window.firebaseModules.deleteDoc(emailRef);
-                                    
                                     setUserData(newData);
                                 } else {
                                     setUserData(null);
@@ -518,7 +551,7 @@
                     setLoading(false);
                 });
                 return () => unsubscribe();
-            }, []);
+            }, [isGuest]);
 
             const updateLocalUserData = (updates) => {
                 setUserData(prev => {
@@ -536,7 +569,7 @@
             };
 
             const fetchActiveSessions = async () => {
-                if (!userData || userData.role !== 'student') return;
+                if (isGuest || !userData || userData.role !== 'student') return;
                 setLoading(true);
                 const q = window.firebaseModules.query(
                     window.firebaseModules.collection(db, "test_sessions"),
@@ -550,8 +583,28 @@
             };
 
             const handleLogout = () => {
-                window.firebaseModules.signOut(auth);
+                if (isGuest) {
+                    setIsGuest(false);
+                    setUserData(null);
+                    setUser(null);
+                } else {
+                    window.firebaseModules.signOut(auth);
+                }
                 setView("dashboard");
+            };
+
+            const handleGuestLogin = () => {
+                setIsGuest(true);
+                setUserData({
+                    uid: 'guest',
+                    name: 'ゲスト',
+                    classId: '体験',
+                    role: 'guest',
+                    stamps: 0,
+                    drillStats: { attempts: 0, passes: 0 }
+                });
+                setUser({ uid: 'guest', isAnonymous: true });
+                setLoading(false);
             };
 
             const handleRegister = async (name, classId, studentNumber, isTeacher) => {
@@ -584,20 +637,15 @@
 
             const showRanking = async (sessionId, classIds) => {
                 setLoading(true);
-                // 結果取得
                 const q = window.firebaseModules.query(window.firebaseModules.collection(db, "test_results"), window.firebaseModules.where("sessionId", "==", sessionId));
                 const snap = await window.firebaseModules.getDocs(q);
                 let results = snap.docs.map(d => d.data());
                 
-                // クラスフィルタリング (指定がある場合)
                 if (classIds && classIds.length > 0) {
                     results = results.filter(r => classIds.includes(r.classId));
                 }
                 
-                // 本試験の結果のみ(finished)
                 results = results.filter(r => r.status === 'finished');
-
-                // ソート: 点数降順 > タイム昇順
                 results.sort((a, b) => b.score - a.score || a.timeTaken - b.timeTaken);
                 
                 const top10 = results.slice(0, 10);
@@ -627,7 +675,7 @@
 
             if (loading) return <Loading />;
 
-            if (!user) return <LoginScreen openModal={openModal} />;
+            if (!user) return <LoginScreen openModal={openModal} onGuestLogin={handleGuestLogin} />;
             if (!userData) return <RegistrationScreen onRegister={handleRegister} openModal={openModal} />;
 
             return (
@@ -636,7 +684,7 @@
                         {modalConfig.content}
                     </Modal>
 
-                    {view === "drill" && <DrillGame user={userData} updateLocalUserData={updateLocalUserData} onBack={() => setView("dashboard")} openModal={openModal} />}
+                    {view === "drill" && <DrillGame user={userData} isGuest={isGuest} updateLocalUserData={updateLocalUserData} onBack={() => setView("dashboard")} openModal={openModal} />}
                     {view === "test-list" && (
                         <div className="min-h-screen bg-green-50 p-4">
                             <div className="max-w-md mx-auto mt-10">
@@ -674,16 +722,18 @@
                                     </p>
                                 </div>
                                 <div className="flex gap-2 items-center">
-                                     <button onClick={() => refreshData(user.uid, userData.role, userData.classId)} className="text-gray-400 hover:text-green-600 p-2" title="データを更新">
-                                        🔄
-                                     </button>
+                                     {!isGuest && (
+                                         <button onClick={() => refreshData(user.uid, userData.role, userData.classId)} className="text-gray-400 hover:text-green-600 p-2" title="データを更新">
+                                            🔄
+                                         </button>
+                                     )}
                                      {userData.role === 'teacher' && (
                                         <button onClick={() => setView("teacher")} className="bg-purple-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-purple-700 transition">
                                             教員メニュー
                                         </button>
                                     )}
                                     <button onClick={handleLogout} className="text-gray-500 hover:text-red-500 px-3 py-2">
-                                        ログアウト
+                                        {isGuest ? '終了' : 'ログアウト'}
                                     </button>
                                 </div>
                             </header>
@@ -693,22 +743,30 @@
                                     <h2 className="text-lg font-bold text-gray-700 mb-4 flex items-center">
                                         <span className="mr-2">🏆</span> スタンプカード
                                     </h2>
-                                    <div className="flex flex-wrap gap-2 mb-4 h-64 overflow-y-auto content-start p-2 bg-gray-50 rounded-lg border-inner shadow-inner">
-                                        {[...Array(Math.max(20, Math.min(100, userData.stamps + (5 - userData.stamps % 5))))].map((_, i) => (
-                                            <div key={i} className={`w-8 h-8 md:w-10 md:h-10 rounded-full flex items-center justify-center border-2 text-xs md:text-sm font-bold transition-all duration-300
-                                                ${i < userData.stamps ? 'border-yellow-400 bg-yellow-100 text-yellow-600 scale-100' : 'border-gray-200 text-gray-300 scale-90'}`}>
-                                                {i < userData.stamps ? '★' : i + 1}
+                                    {isGuest ? (
+                                        <div className="h-64 flex items-center justify-center bg-gray-50 rounded-lg border-inner shadow-inner text-gray-400">
+                                            ゲストモードではスタンプは記録されません
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <div className="flex flex-wrap gap-2 mb-4 h-64 overflow-y-auto content-start p-2 bg-gray-50 rounded-lg border-inner shadow-inner">
+                                                {[...Array(Math.max(20, Math.min(100, userData.stamps + (5 - userData.stamps % 5))))].map((_, i) => (
+                                                    <div key={i} className={`w-8 h-8 md:w-10 md:h-10 rounded-full flex items-center justify-center border-2 text-xs md:text-sm font-bold transition-all duration-300
+                                                        ${i < userData.stamps ? 'border-yellow-400 bg-yellow-100 text-yellow-600 scale-100' : 'border-gray-200 text-gray-300 scale-90'}`}>
+                                                        {i < userData.stamps ? '★' : i + 1}
+                                                    </div>
+                                                ))}
                                             </div>
-                                        ))}
-                                    </div>
-                                    <div className="flex items-center justify-between">
-                                        <div className={`px-3 py-1 rounded-full text-white text-sm font-bold ${getRank(userData.stamps).color}`}>
-                                            Rank: {getRank(userData.stamps).name}
-                                        </div>
-                                        <div className="text-sm text-gray-500">
-                                            合計: {userData.stamps}個
-                                        </div>
-                                    </div>
+                                            <div className="flex items-center justify-between">
+                                                <div className={`px-3 py-1 rounded-full text-white text-sm font-bold ${getRank(userData.stamps).color}`}>
+                                                    Rank: {getRank(userData.stamps).name}
+                                                </div>
+                                                <div className="text-sm text-gray-500">
+                                                    合計: {userData.stamps}個
+                                                </div>
+                                            </div>
+                                        </>
+                                    )}
                                 </div>
 
                                 <div className="space-y-4">
@@ -718,17 +776,19 @@
                                     >
                                         <span className="text-3xl mb-2">🧪</span>
                                         <span className="text-2xl font-bold">演習モード</span>
-                                        <span className="text-sm opacity-90">ランダム10問に挑戦！スタンプGET</span>
+                                        <span className="text-sm opacity-90">ランダム10問に挑戦！{!isGuest && 'スタンプGET'}</span>
                                     </button>
 
-                                    <button 
-                                        onClick={fetchActiveSessions}
-                                        className="w-full bg-white border-2 border-indigo-100 text-indigo-600 p-6 rounded-2xl shadow-lg transform transition hover:scale-105 flex flex-col items-center justify-center hover:bg-indigo-50"
-                                    >
-                                        <span className="text-3xl mb-2">📝</span>
-                                        <span className="text-2xl font-bold">テスト会場へ</span>
-                                        <span className="text-sm opacity-90">開催中のテストを確認する</span>
-                                    </button>
+                                    {!isGuest && (
+                                        <button 
+                                            onClick={fetchActiveSessions}
+                                            className="w-full bg-white border-2 border-indigo-100 text-indigo-600 p-6 rounded-2xl shadow-lg transform transition hover:scale-105 flex flex-col items-center justify-center hover:bg-indigo-50"
+                                        >
+                                            <span className="text-3xl mb-2">📝</span>
+                                            <span className="text-2xl font-bold">テスト会場へ</span>
+                                            <span className="text-sm opacity-90">開催中のテストを確認する</span>
+                                        </button>
+                                    )}
                                     
                                     {makeupSessions.length > 0 && (
                                         <div className="bg-orange-50 border-l-4 border-orange-500 p-4 rounded-r-xl shadow-sm">
@@ -757,13 +817,15 @@
                                         </div>
                                     )}
 
-                                    <div className="bg-white p-4 rounded-xl shadow-sm">
-                                        <h3 className="text-sm font-bold text-gray-500 mb-2">学習状況</h3>
-                                        <div className="flex justify-between text-sm">
-                                            <span>演習回数: {userData.drillStats?.attempts || 0}回</span>
-                                            <span>合格率: {userData.drillStats?.attempts ? Math.round((userData.drillStats.passes / userData.drillStats.attempts) * 100) : 0}%</span>
+                                    {!isGuest && (
+                                        <div className="bg-white p-4 rounded-xl shadow-sm">
+                                            <h3 className="text-sm font-bold text-gray-500 mb-2">学習状況</h3>
+                                            <div className="flex justify-between text-sm">
+                                                <span>演習回数: {userData.drillStats?.attempts || 0}回</span>
+                                                <span>合格率: {userData.drillStats?.attempts ? Math.round((userData.drillStats.passes / userData.drillStats.attempts) * 100) : 0}%</span>
+                                            </div>
                                         </div>
-                                    </div>
+                                    )}
                                 </div>
                             </main>
                         </div>
@@ -774,22 +836,14 @@
 
         // --- Sub Components ---
 
-        const LoginScreen = ({ openModal }) => {
+        const LoginScreen = ({ openModal, onGuestLogin }) => {
             const handleGoogleLogin = async () => {
                 const provider = new window.firebaseModules.GoogleAuthProvider();
                 try {
                     await window.firebaseModules.signInWithPopup(auth, provider);
                 } catch (error) {
                     console.error("Login failed", error);
-                    openModal("エラー", <p>ログインに失敗しました。<br/>{error.message}</p>);
-                }
-            };
-            
-            const handleGuestLogin = async () => {
-                 try {
-                    await window.firebaseModules.signInAnonymously(auth);
-                } catch (error) {
-                    openModal("エラー", "ゲストログインに失敗しました。");
+                    openModal("エラー", <p>ログインに失敗しました。<br/>{error.message}<br/><small>※ネットワーク未接続の場合はWi-Fiを確認してください。</small></p>);
                 }
             };
 
@@ -797,8 +851,8 @@
                 <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-b from-green-50 to-green-100 p-4">
                     <div className="bg-white p-8 rounded-3xl shadow-xl max-w-md w-full text-center">
                         <div className="text-6xl mb-4">⚗️</div>
-                        <h1 className="text-3xl font-bold text-gray-800 mb-2">有機化合物マスター</h1>
-                        <p className="text-gray-500 mb-8">有機化合物の名称と構造式をマスターしよう</p>
+                        <h1 className="text-3xl font-bold text-gray-800 mb-2">Organic Chem Master</h1>
+                        <p className="text-gray-500 mb-8">有機化合物の構造式をマスターしよう</p>
                         <div className="space-y-3">
                             <button 
                                 onClick={handleGoogleLogin}
@@ -813,10 +867,10 @@
                                 <div className="flex-grow border-t border-gray-300"></div>
                             </div>
                             <button 
-                                onClick={handleGuestLogin}
+                                onClick={onGuestLogin}
                                 className="w-full bg-gray-600 text-white font-bold py-3 px-4 rounded-xl shadow-sm hover:bg-gray-700 flex items-center justify-center transition"
                             >
-                                ゲスト(匿名)として開始
+                                ゲスト(記録なし)として開始
                             </button>
                         </div>
                     </div>
@@ -1104,7 +1158,7 @@
             return questions;
         };
 
-        const DrillGame = ({ user, updateLocalUserData, onBack, openModal }) => {
+        const DrillGame = ({ user, isGuest, updateLocalUserData, onBack, openModal }) => {
             const [state, setState] = useState('ready');
             const [questions, setQuestions] = useState([]);
             const [result, setResult] = useState(null);
@@ -1119,18 +1173,21 @@
                 const passed = res.score >= 8;
                 setResult({ ...res, passed });
                 setState('result');
-                const userRef = window.firebaseModules.doc(db, "users", user.uid);
-                const updates = {
-                    "drillStats.attempts": window.firebaseModules.increment(1),
-                    "drillStats.passes": passed ? window.firebaseModules.increment(1) : window.firebaseModules.increment(0)
-                };
-                if (passed) updates.stamps = window.firebaseModules.increment(1);
                 
-                await window.firebaseModules.updateDoc(userRef, updates);
-                updateLocalUserData({
-                    stamps: passed ? 1 : 0,
-                    drillStats: { attempts: 1, passes: passed ? 1 : 0 }
-                });
+                if (!isGuest) {
+                    const userRef = window.firebaseModules.doc(db, "users", user.uid);
+                    const updates = {
+                        "drillStats.attempts": window.firebaseModules.increment(1),
+                        "drillStats.passes": passed ? window.firebaseModules.increment(1) : window.firebaseModules.increment(0)
+                    };
+                    if (passed) updates.stamps = window.firebaseModules.increment(1);
+                    
+                    await window.firebaseModules.updateDoc(userRef, updates);
+                    updateLocalUserData({
+                        stamps: passed ? 1 : 0,
+                        drillStats: { attempts: 1, passes: passed ? 1 : 0 }
+                    });
+                }
             };
 
             return (
@@ -1139,7 +1196,7 @@
                         <div className="max-w-md mx-auto mt-20 text-center">
                             <h1 className="text-3xl font-bold mb-8">演習モード</h1>
                             <div className="bg-white p-8 rounded-2xl shadow-lg mb-8">
-                                <p className="text-gray-600 mb-4">10問中8問正解で合格！<br/>スタンプをゲットしよう。</p>
+                                <p className="text-gray-600 mb-4">10問中8問正解で合格！<br/>{isGuest ? '記録は残りません' : 'スタンプをゲットしよう'}</p>
                                 <p className="text-sm text-gray-400">制限時間: 60秒</p>
                             </div>
                             <div className="space-y-4">
@@ -1225,6 +1282,7 @@
                         setStatus('active');
                         setLocalStatus('active');
                     } else if (data.status === 'created' && localStatus === 'standby') {
+                        // Cancelled
                         onBack();
                     } else if (data.status === 'closed') {
                         if (localStatus === 'waiting_rank') {
@@ -1399,11 +1457,6 @@
             const closeSessionRound = async (session) => {
                 if (!confirm("結果を公開してこのセッションを終了しますか？")) return;
                 
-                // 現在のターゲットクラスを完了リストへ移動し、ステータスをclosedにする（一時的に）
-                // その後、また別のクラスで実施するためにcreatedに戻すフローにするか、
-                // あるいはランキングを見せるために一度closedにして、ランキングモーダルを出した後にcreatedに戻すか。
-                // ここではシンプルに「今回のラウンド終了」として処理する。
-                
                 const completed = [...(session.completedClasses || []), ...session.targetClasses];
                 const currentTargets = session.targetClasses;
                 
@@ -1416,17 +1469,6 @@
                 
                 // 少し待ってからランキング表示（生徒側もこのタイミングで見れるようになる）
                 showRanking(session.id, currentTargets);
-                
-                // ※ 生徒がランキングを見た後どうするか？
-                // 現状の仕様では、生徒は戻るボタンで退出。
-                // 教員は、次のクラスのためにこのセッションを再利用したい場合は、
-                // ステータスがclosedのままだと一覧上「終了」に見えるが、
-                // 次のクラスを選択して「待機状態にする」アクションが必要。
-                // よって、このままでOK（closed状態からでも待機開始できるようにUI側で制御すればよい）。
-                // ただし、TeacherDashboardのUIロジックで closed の扱いを調整する必要がある。
-                // 今回の実装では、closedになったセッションは一覧で「実施済み」として表示され、
-                // そこから「再開（次のクラス用に待機）」ボタンなどを設けるのが親切だが、
-                // 既存ロジックに合わせて、closedになった瞬間に created と同様の「クラス選択＋待機開始」UIを表示するようにする。
             };
             
             const cancelTest = async (session) => {
@@ -1476,7 +1518,8 @@
             const toggleAllCsvClasses = () => { setIsAllCsvClasses(!isAllCsvClasses); setTargetCsvClasses(new Set()); };
             const downloadCSV = async () => {
                 const userSnap = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, "users"));
-                let users = userSnap.docs.map(d => d.data()).filter(u => u.role === 'student');
+                // UIDをIDから確実に取得
+                let users = userSnap.docs.map(d => ({ uid: d.id, ...d.data() })).filter(u => u.role === 'student');
                 if (!isAllCsvClasses) users = users.filter(u => targetCsvClasses.has(u.classId));
                 users.sort((a, b) => {
                     if (a.classId !== b.classId) return a.classId.localeCompare(b.classId);
