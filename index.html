@@ -216,6 +216,75 @@
             url: getDriveImageUrl(c.url)
         }));
 
+        // --- Question Selection Logic: Groups & Buckets ---
+        const quizGroups = {
+            alkanes_straight: [1,2,3,4,5,6,7,8,9,10],
+            alkanes_branched: [11,12,13],
+            cycloalkanes: [15,16,17,18],
+            cycloalkenes: [28],
+            alkenes: [20,21,22,23],
+            alkynes: [30,31,32,33],
+            haloalkanes: [14,19,25,35],
+            haloalkenes: [34],
+            halocycloalkanes: [29],
+            polymers: [24,27],
+            vinyl_monomers: [26,36,37],
+            alcohols: [38,39,40,41,42,43,44],
+            polyols: [45,46],
+            ethers: [47,48],
+            aldehydes: [49,50,98],
+            ketones: [51,52,53],
+            carboxylic_acids_aliphatic: [54,55,56,57],
+            dicarboxylic_cis_trans: [58,59],
+            esters_small: [60,61,62,63],
+            anhydrides: [65,66,99],
+            fatty_acids: [67,68,69,70,71],
+            aromatics_hydrocarbons: [72,73,74,75,76,77,78,79,109,111],
+            aromatics_halo: [83,84],
+            aromatics_nitro: [80,108],
+            aromatics_sulfonic: [81,82],
+            phenols_naphthols: [85,86,87,88,89,90],
+            phenol_derivatives: [92,93,94],
+            aromatic_acids_related: [91,95,96,97,100,101],
+            aniline_family: [102,103,104],
+            diazo_azo: [105,106,107],
+            oxidizing_like: [64,110]
+        };
+
+        const trickyBuckets = {
+            alkane_C1_C4: [1,2,3,4],
+            alkane_C5_C10: [5,6,7,8,9,10],
+            branched_small: [11,12,13],
+            cyclo_size: [15,16,17,18],
+            ring_hex_vs_aromatic: [18,28,111,17],
+            alkene_linear: [20,21,22,23],
+            butyne_isomers: [32,33,31,30],
+            halo_ethane_family: [25,34,35,14],
+            halo_propane_family: [19,22,21,25],
+            halo_aromatics: [83,84,80,72],
+            polymer_pair: [24,27,20,26],
+            propanol_isomers: [40,41,39,38],
+            butanol_isomers: [42,43,44,41],
+            polyols: [45,46,40,38],
+            ethers: [47,48,38,39],
+            aldehydes: [49,50,98,51],
+            ketones: [51,52,53,50],
+            acids_low: [54,55,56,57],
+            maleic_fumaric: [58,59,66,57],
+            esters_formate_acetate: [60,61,62,63],
+            anhydrides: [65,66,99,96],
+            fatty_acids: [67,71,68,69,70],
+            xylene_isomers: [73,74,75,72],
+            cresol_isomers: [86,87,88,85],
+            naphthol_isomers: [89,90,76,85],
+            aromatic_acids: [95,96,97,91],
+            salicylic_family: [91,100,101,95],
+            aniline_family: [102,103,104,105],
+            azo_family: [105,106,107,89],
+            nitro_heavy: [80,108,94,93],
+            oxidizing_like: [64,110,36,94]
+        };
+
         // --- Firebase Initialization ---
         // Safety check for Firebase loading
         const initializeFirebase = () => {
