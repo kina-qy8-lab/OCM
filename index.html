@@ -199,75 +199,6 @@
             { id: 111, name: "ベンゼン", url: "https://drive.google.com/uc?id=1JpKeyNXgIv0RXc2VntrWJCeoem-DatqZ" }
         ];
 
-        // --- Question Selection Logic: Groups & Buckets ---
-        const quizGroups = {
-            alkanes_straight: [1,2,3,4,5,6,7,8,9,10],
-            alkanes_branched: [11,12,13],
-            cycloalkanes: [15,16,17,18],
-            cycloalkenes: [28],
-            alkenes: [20,21,22,23],
-            alkynes: [30,31,32,33],
-            haloalkanes: [14,19,25,35],
-            haloalkenes: [34],
-            halocycloalkanes: [29],
-            polymers: [24,27],
-            vinyl_monomers: [26,36,37],
-            alcohols: [38,39,40,41,42,43,44],
-            polyols: [45,46],
-            ethers: [47,48],
-            aldehydes: [49,50,98],
-            ketones: [51,52,53],
-            carboxylic_acids_aliphatic: [54,55,56,57],
-            dicarboxylic_cis_trans: [58,59],
-            esters_small: [60,61,62,63],
-            anhydrides: [65,66,99],
-            fatty_acids: [67,68,69,70,71],
-            aromatics_hydrocarbons: [72,73,74,75,76,77,78,79,109,111],
-            aromatics_halo: [83,84],
-            aromatics_nitro: [80,108],
-            aromatics_sulfonic: [81,82],
-            phenols_naphthols: [85,86,87,88,89,90],
-            phenol_derivatives: [92,93,94],
-            aromatic_acids_related: [91,95,96,97,100,101],
-            aniline_family: [102,103,104],
-            diazo_azo: [105,106,107],
-            oxidizing_like: [64,110]
-        };
-
-        const trickyBuckets = {
-            alkane_C1_C4: [1,2,3,4],
-            alkane_C5_C10: [5,6,7,8,9,10],
-            branched_small: [11,12,13],
-            cyclo_size: [15,16,17,18],
-            ring_hex_vs_aromatic: [18,28,111,17],
-            alkene_linear: [20,21,22,23],
-            butyne_isomers: [32,33,31,30],
-            halo_ethane_family: [25,34,35,14],
-            halo_propane_family: [19,22,21,25],
-            halo_aromatics: [83,84,80,72],
-            polymer_pair: [24,27,20,26],
-            propanol_isomers: [40,41,39,38],
-            butanol_isomers: [42,43,44,41],
-            polyols: [45,46,40,38],
-            ethers: [47,48,38,39],
-            aldehydes: [49,50,98,51],
-            ketones: [51,52,53,50],
-            acids_low: [54,55,56,57],
-            maleic_fumaric: [58,59,66,57],
-            esters_formate_acetate: [60,61,62,63],
-            anhydrides: [65,66,99,96],
-            fatty_acids: [67,71,68,69,70],
-            xylene_isomers: [73,74,75,72],
-            cresol_isomers: [86,87,88,85],
-            naphthol_isomers: [89,90,76,85],
-            aromatic_acids: [95,96,97,91],
-            salicylic_family: [91,100,101,95],
-            aniline_family: [102,103,104,105],
-            azo_family: [105,106,107,89],
-            nitro_heavy: [80,108,94,93],
-            oxidizing_like: [64,110,36,94]
-        };
-
         // --- Helper: Convert Drive URL to Thumbnail URL for better stability ---
         const getDriveImageUrl = (url) => {
             if (!url) return 'https://placehold.co/400?text=No+Image';
@@ -366,18 +297,23 @@
             const [count, setCount] = useState(0);
             
             useEffect(() => {
-                if (!targetClasses || targetClasses.length === 0 || !db) {
-                    setCount(0);
-                    return;
-                }
+                if (!db || !sessionId) return;
+                
+                // Firestoreのインデックス問題を避けるため、sessionIdのみで監視し、クライアント側でフィルタリング
                 const q = window.firebaseModules.query(
                     window.firebaseModules.collection(db, "test_results"),
-                    window.firebaseModules.where("sessionId", "==", sessionId),
-                    window.firebaseModules.where("status", "==", "joined"),
-                    window.firebaseModules.where("classId", "in", targetClasses)
+                    window.firebaseModules.where("sessionId", "==", sessionId)
                 );
+                
                 const unsub = window.firebaseModules.onSnapshot(q, (snap) => {
-                    setCount(snap.size);
+                    // クライアントサイドフィルタリング
+                    let validDocs = snap.docs.filter(d => {
+                        const data = d.data();
+                        // ステータスがjoined かつ ターゲットクラスに含まれるか
+                        return data.status === 'joined' && 
+                               (targetClasses && targetClasses.includes(data.classId));
+                    });
+                    setCount(validDocs.length);
                 });
                 return () => unsub();
             }, [sessionId, targetClasses]);
@@ -395,18 +331,23 @@
             const [count, setCount] = useState(0);
             
             useEffect(() => {
-                if (!targetClasses || targetClasses.length === 0 || !db) {
-                    setCount(0);
-                    return;
-                }
+                if (!db || !sessionId) return;
+
+                // Firestoreのインデックス問題を避けるため、sessionIdのみで監視
                 const q = window.firebaseModules.query(
                     window.firebaseModules.collection(db, "test_results"),
-                    window.firebaseModules.where("sessionId", "==", sessionId),
-                    window.firebaseModules.where("status", "==", "finished"),
-                    window.firebaseModules.where("classId", "in", targetClasses)
+                    window.firebaseModules.where("sessionId", "==", sessionId)
                 );
+                
                 const unsub = window.firebaseModules.onSnapshot(q, (snap) => {
-                    setCount(snap.size);
+                    // クライアントサイドフィルタリング
+                    let validDocs = snap.docs.filter(d => {
+                        const data = d.data();
+                        // ステータスがfinished かつ ターゲットクラスに含まれるか
+                        return data.status === 'finished' && 
+                               (targetClasses && targetClasses.includes(data.classId));
+                    });
+                    setCount(validDocs.length);
                 });
                 return () => unsub();
             }, [sessionId, targetClasses]);
@@ -637,6 +578,7 @@
 
             const showRanking = async (sessionId, classIds) => {
                 setLoading(true);
+                // 修正：sessionIdのみでクエリし、メモリ上でフィルタリング
                 const q = window.firebaseModules.query(window.firebaseModules.collection(db, "test_results"), window.firebaseModules.where("sessionId", "==", sessionId));
                 const snap = await window.firebaseModules.getDocs(q);
                 let results = snap.docs.map(d => d.data());
@@ -1516,15 +1458,20 @@
                 setTargetCsvClasses(newSet); setIsAllCsvClasses(false);
             };
             const toggleAllCsvClasses = () => { setIsAllCsvClasses(!isAllCsvClasses); setTargetCsvClasses(new Set()); };
+            
             const downloadCSV = async () => {
                 const userSnap = await window.firebaseModules.getDocs(window.firebaseModules.collection(db, "users"));
-                // UIDをIDから確実に取得
-                let users = userSnap.docs.map(d => ({ uid: d.id, ...d.data() })).filter(u => u.role === 'student');
+                // 修正: UIDを確実に取得するため、d.data()の後にuid: d.idを上書き（一括登録時はメアドIDだが、ログイン後はUID）
+                // ただし、もし移行前のデータ(メアドID)が含まれている場合は、テスト結果とは紐付かない（テスト結果はUID）。
+                // テストを受けているならログイン済み=移行済み(UID ID)なので、問題ないはず。
+                let users = userSnap.docs.map(d => ({ ...d.data(), uid: d.id })).filter(u => u.role === 'student');
+                
                 if (!isAllCsvClasses) users = users.filter(u => targetCsvClasses.has(u.classId));
                 users.sort((a, b) => {
                     if (a.classId !== b.classId) return a.classId.localeCompare(b.classId);
                     return (parseInt(a.studentNumber) || 0) - (parseInt(b.studentNumber) || 0);
                 });
+                
                 let csv = "";
                 if (csvType === 'drill') {
                     csv = "クラス,出席番号,氏名,スタンプ数,演習実施回数,演習合格回数,演習合格率\n";
@@ -1545,7 +1492,12 @@
                         sessionList.forEach(s => {
                             const res = results.find(r => r.uid === u.uid && r.sessionId === s.id);
                             if (csvType === 'score') {
-                                if (res && res.status === 'finished') line += `,${res.score}`; else line += ",-";
+                                // 修正: finished 以外の状態でもスコアがあれば出力するように変更（通信エラー対策）
+                                if (res && (res.status === 'finished' || res.score !== undefined)) {
+                                    line += `,${res.score}`; 
+                                } else {
+                                    line += ",-";
+                                }
                             } else if (csvType === 'status') {
                                 if (!res) line += ",未受験"; else if (res.score >= 8) line += ",合格"; else if (res.makeupPassed) line += ",追試合格"; else line += ",不合格";
                             }
