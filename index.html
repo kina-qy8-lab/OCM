@@ -1249,7 +1249,10 @@
             const [localStatus, setLocalStatus] = useState('standby'); // standby, active, waiting_rank, rank_ready
             const [questions, setQuestions] = useState([]);
             const [makeupResult, setMakeupResult] = useState(null);
-            
+
+            // ★追加（最小修正）：joined の再書き込みで finished を上書きしないためのガード
+            const joinedOnceRef = useRef(false);
+
             useEffect(() => {
                 if (!session) return;
                 
@@ -1264,19 +1267,41 @@
                     return;
                 }
 
-                if (session.status === 'standby' || session.status === 'active') {
-                    const joinSession = async () => {
-                         const ref = window.firebaseModules.doc(db, "test_results", `${session.id}_${user.uid}`);
-                         await window.firebaseModules.setDoc(ref, {
+                // ★修正（最小）：joinSession が finished を上書きしない＆何度も走らないようにする
+                const joinSession = async () => {
+                    if (joinedOnceRef.current) return;
+
+                    const ref = window.firebaseModules.doc(db, "test_results", `${session.id}_${user.uid}`);
+
+                    try {
+                        const existing = await window.firebaseModules.getDoc(ref);
+                        if (existing.exists()) {
+                            const data = existing.data();
+                            // すでに finished なら絶対に joined に戻さない
+                            if (data && data.status === 'finished') {
+                                joinedOnceRef.current = true;
+                                return;
+                            }
+                        }
+
+                        await window.firebaseModules.setDoc(ref, {
                             sessionId: session.id,
                             uid: user.uid,
                             name: user.name,
                             classId: user.classId,
                             studentNumber: user.studentNumber || "",
-                            status: 'joined', 
+                            status: 'joined',
                             timestamp: window.firebaseModules.serverTimestamp()
-                         }, { merge: true });
-                    };
+                        }, { merge: true });
+
+                        joinedOnceRef.current = true;
+                    } catch (e) {
+                        console.error("joinSession failed:", e);
+                        // 失敗した場合は次回リトライできるように false のままにしておく
+                    }
+                };
+
+                if (session.status === 'standby' || session.status === 'active') {
                     joinSession();
                 }
 
