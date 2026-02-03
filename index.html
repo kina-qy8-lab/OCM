@@ -1245,209 +1245,229 @@
         };
 
         const TestRunner = ({ user, session, isMakeup, onBack, openModal, showRanking }) => {
-            const [status, setStatus] = useState('standby');
-            const [localStatus, setLocalStatus] = useState('standby'); // standby, active, waiting_rank, rank_ready
-            const [questions, setQuestions] = useState([]);
-            const [makeupResult, setMakeupResult] = useState(null);
-
-            // ★追加（最小修正）：joined の再書き込みで finished を上書きしないためのガード
-            const joinedOnceRef = useRef(false);
-
-            useEffect(() => {
-                if (!session) return;
-                
-                if (isMakeup) {
-                    const sessionQs = session.questionSet.map(qData => {
-                        const correct = COMPOUNDS.find(c => c.id === qData.correctId);
-                        const choices = qData.choiceIds.map(id => COMPOUNDS.find(c => c.id === id));
-                        return { correct, choices, type: qData.type };
-                    });
-                    setQuestions(sessionQs);
-                    setStatus('active');
-                    return;
-                }
-
-                // ★修正（最小）：joinSession が finished を上書きしない＆何度も走らないようにする
-                const joinSession = async () => {
-                  const ref = window.firebaseModules.doc(db, "test_results", `${session.id}_${user.uid}`);
-                
-                  try {
-                    const existing = await window.firebaseModules.getDoc(ref);
-                
-                    // ✅ すでにドキュメントがあるなら、joined を書かない（status上書き防止）
-                    if (existing.exists()) return;
-                
-                    // ✅ 無いときだけ作成
-                    await window.firebaseModules.setDoc(ref, {
-                      sessionId: session.id,
-                      uid: user.uid,
-                      name: user.name,
-                      classId: user.classId,
-                      studentNumber: user.studentNumber || "",
-                      status: "joined",
-                      timestamp: window.firebaseModules.serverTimestamp()
-                    }, { merge: true });
-                
-                  } catch (e) {
-                    console.error("joinSession failed:", e);
-                  }
-                };
-
-                if (session.status === 'standby' || session.status === 'active') {
-                    joinSession();
-                }
-
-                const sessionRef = window.firebaseModules.doc(db, "test_sessions", session.id);
-                const unsub = window.firebaseModules.onSnapshot(sessionRef, (snap) => {
-                    const data = snap.data();
-                    if (data.status === 'active' && localStatus === 'standby') {
-                        const sessionQs = data.questionSet.map(qData => {
-                            const correct = COMPOUNDS.find(c => c.id === qData.correctId);
-                            const choices = qData.choiceIds.map(id => COMPOUNDS.find(c => c.id === id));
-                            return { correct, choices, type: qData.type };
-                        });
-                        setQuestions(sessionQs);
-                        setStatus('active');
-                        setLocalStatus('active');
-                    } else if (data.status === 'created' && localStatus === 'standby') {
-                        // Cancelled
-                        onBack();
-                    } else if (data.status === 'closed') {
-                        if (localStatus === 'waiting_rank') {
-                            setLocalStatus('rank_ready');
-                        }
-                    }
-                });
-                
-                return () => unsub();
-            }, [session, localStatus, isMakeup]);
-
-            const handleFinish = async (res) => {
-              setStatus('finished');
-            
-              if (isMakeup) {
-                const passed = res.score >= 8;
-                setMakeupResult({ score: res.score, passed });
-            
-                const resRef = window.firebaseModules.doc(db, "test_results", `${session.id}_${user.uid}`);
-                const makeupRecord = { score: res.score, timestamp: window.firebaseModules.Timestamp.now() };
-            
-                const updateData = { makeupHistory: window.firebaseModules.arrayUnion(makeupRecord) };
-                if (passed) updateData.makeupPassed = true;
-            
-                await window.firebaseModules.setDoc(resRef, updateData, { merge: true });
-                return;
-              }
-            
-              // ✅ ここから本試験：まず保存中表示
-              setLocalStatus('saving_result');
-            
+          const [status, setStatus] = useState('standby');
+          const [localStatus, setLocalStatus] = useState('standby'); // standby, active, saving_result, waiting_rank, rank_ready
+          const [questions, setQuestions] = useState([]);
+          const [makeupResult, setMakeupResult] = useState(null);
+        
+          // ✅ join を何度も走らせない（リロード/再レンダ対策）
+          const joinedOnceRef = useRef(false);
+        
+          useEffect(() => {
+            if (!session) return;
+        
+            // 追試は session.questionSet をそのまま使って即開始
+            if (isMakeup) {
+              const sessionQs = session.questionSet.map(qData => {
+                const correct = COMPOUNDS.find(c => c.id === qData.correctId);
+                const choices = qData.choiceIds.map(id => COMPOUNDS.find(c => c.id === id));
+                return { correct, choices, type: qData.type };
+              });
+              setQuestions(sessionQs);
+              setStatus('active');
+              setLocalStatus('active');
+              return;
+            }
+        
+            // ✅ joined は「ドキュメントが無い時だけ」作る（finished を joined に戻さない）
+            const joinSession = async () => {
+              if (joinedOnceRef.current) return;
+              joinedOnceRef.current = true;
+        
               const ref = window.firebaseModules.doc(db, "test_results", `${session.id}_${user.uid}`);
-            
               try {
-                // ✅ finished を確実に書く（join に戻されない前提＋ここで確実化）
+                const existing = await window.firebaseModules.getDoc(ref);
+                if (existing.exists()) return;
+        
                 await window.firebaseModules.setDoc(ref, {
                   sessionId: session.id,
                   uid: user.uid,
                   name: user.name,
                   classId: user.classId,
                   studentNumber: user.studentNumber || "",
-                  score: res.score,
-                  timeTaken: res.timeTaken,
-                  status: 'finished',
-                  finishedAt: window.firebaseModules.serverTimestamp()
+                  status: "joined",
+                  timestamp: window.firebaseModules.serverTimestamp()
                 }, { merge: true });
-            
-                // ✅ 書けたら集計待ちへ
-                setLocalStatus('waiting_rank');
-            
+        
               } catch (e) {
-                console.error("save finished failed:", e);
-                openModal("保存エラー", (
-                  <div>
-                    <p className="mb-2">結果の保存に失敗しました。</p>
-                    <p className="text-sm text-gray-500 mb-4">{String(e.message || e)}</p>
-                    <button
-                      className="w-full bg-indigo-600 text-white font-bold py-3 rounded-xl hover:bg-indigo-700"
-                      onClick={() => handleFinish(res)}
-                    >
-                      もう一度保存する
-                    </button>
-                  </div>
-                ));
+                console.error("joinSession failed:", e);
               }
             };
-
-            return (
-                <div className="min-h-screen bg-indigo-50 p-4">
-                     {status === 'standby' && !isMakeup && (
-                        <div className="flex flex-col items-center justify-center h-[80vh] text-center">
-                            <div className="animate-pulse text-6xl mb-4">📡</div>
-                            <h2 className="text-2xl font-bold text-indigo-900 mb-2">先生の合図を待っています...</h2>
-                            <p className="text-indigo-600">{session.name}</p>
-                            <p className="text-sm text-gray-500 mt-2">参加登録完了。そのままお待ちください。</p>
-                            <button onClick={onBack} className="mt-8 text-gray-400 underline">退出</button>
-                        </div>
-                    )}
-                    {status === 'active' && <Quiz mode="test" questions={questions} timeLimit={60} onFinish={handleFinish} />}
-                    {status === 'finished' && (
-                        <div className="max-w-md mx-auto mt-20 text-center bg-white p-8 rounded-3xl shadow-xl">
-                            {isMakeup ? (
-                                <div>
-                                    <h2 className="text-2xl font-bold mb-4">追試終了</h2>
-                                    <div className={`text-5xl font-bold mb-4 ${makeupResult.passed ? 'text-green-600' : 'text-red-500'}`}>
-                                        {makeupResult.score}点
-                                    </div>
-                                    <div className="text-xl mb-6">
-                                        {makeupResult.passed ? "💮 合格！おめでとうございます！" : "💪 不合格... また明日挑戦してください"}
-                                    </div>
-                                    <button onClick={onBack} className="mt-8 w-full bg-gray-200 text-gray-700 py-3 rounded-xl hover:bg-gray-300">戻る</button>
-                                </div>
-                            ) : (
-                                <div>
-                                    {localStatus === 'saving_result' ? (
-                                      <div>
-                                        <div className="animate-spin text-4xl mb-4">💾</div>
-                                        <h2 className="text-xl font-bold mb-4">結果を保存中...</h2>
-                                        <p className="text-gray-600">このままお待ちください。</p>
-                                      </div>
-                                    ) : localStatus === 'waiting_rank' ? (
-                                      <div>
-                                        <div className="animate-spin text-4xl mb-4">⏳</div>
-                                        <h2 className="text-xl font-bold mb-4">集計中...</h2>
-                                        <p className="text-gray-600">先生が結果を公開するまで<br/>このままお待ちください。</p>
-                                      </div>
-                                    ) : localStatus === 'rank_ready' ? (
-                                      ...
-                                    ) : (
-                                      <div>読み込み中...</div>
-                                    )}
-                                    {localStatus === 'waiting_rank' ? (
-                                        <div>
-                                            <div className="animate-spin text-4xl mb-4">⏳</div>
-                                            <h2 className="text-xl font-bold mb-4">集計中...</h2>
-                                            <p className="text-gray-600">先生が結果を公開するまで<br/>このままお待ちください。</p>
-                                        </div>
-                                    ) : localStatus === 'rank_ready' ? (
-                                        <div>
-                                            <h2 className="text-2xl font-bold mb-4">結果発表！</h2>
-                                            <button
-                                              onClick={() => showRanking(session.id, [user.classId])}
-                                              className="w-full bg-indigo-600 text-white font-bold py-3 rounded-xl hover:bg-indigo-700 mb-4 shadow-lg"
-                                            >
-                                              🏆 クラス内ランキングを見る
-                                            </button>
-                                            <button onClick={onBack} className="w-full bg-gray-200 text-gray-700 py-3 rounded-xl hover:bg-gray-300">戻る</button>
-                                        </div>
-                                    ) : (
-                                        <div>読み込み中...</div>
-                                    )}
-                                </div>
-                            )}
-                        </div>
-                    )}
+        
+            if (session.status === 'standby' || session.status === 'active') {
+              joinSession();
+            }
+        
+            // セッション状態監視
+            const sessionRef = window.firebaseModules.doc(db, "test_sessions", session.id);
+            const unsub = window.firebaseModules.onSnapshot(sessionRef, (snap) => {
+              const data = snap.data();
+              if (!data) return;
+        
+              // active になったら開始（standby からのみ）
+              if (data.status === 'active' && localStatus === 'standby') {
+                const sessionQs = data.questionSet.map(qData => {
+                  const correct = COMPOUNDS.find(c => c.id === qData.correctId);
+                  const choices = qData.choiceIds.map(id => COMPOUNDS.find(c => c.id === id));
+                  return { correct, choices, type: qData.type };
+                });
+                setQuestions(sessionQs);
+                setStatus('active');
+                setLocalStatus('active');
+              }
+        
+              // standby 中に created に戻された = 中止
+              if (data.status === 'created' && localStatus === 'standby') {
+                onBack();
+              }
+        
+              // 結果公開（closed）になったら、待機中の生徒は rank_ready へ
+              if (data.status === 'closed' && localStatus === 'waiting_rank') {
+                setLocalStatus('rank_ready');
+              }
+            });
+        
+            return () => unsub();
+          }, [session, isMakeup]); // localStatus は入れない（再購読ループ防止）
+        
+          const handleFinish = async (res) => {
+            setStatus('finished');
+        
+            // 追試
+            if (isMakeup) {
+              const passed = res.score >= 8;
+              setMakeupResult({ score: res.score, passed });
+        
+              const resRef = window.firebaseModules.doc(db, "test_results", `${session.id}_${user.uid}`);
+              const makeupRecord = { score: res.score, timestamp: window.firebaseModules.Timestamp.now() };
+        
+              const updateData = { makeupHistory: window.firebaseModules.arrayUnion(makeupRecord) };
+              if (passed) updateData.makeupPassed = true;
+        
+              await window.firebaseModules.setDoc(resRef, updateData, { merge: true });
+              return;
+            }
+        
+            // 本試験：まず保存中表示
+            setLocalStatus('saving_result');
+        
+            const ref = window.firebaseModules.doc(db, "test_results", `${session.id}_${user.uid}`);
+            try {
+              // ✅ finished を確実に保存
+              await window.firebaseModules.setDoc(ref, {
+                sessionId: session.id,
+                uid: user.uid,
+                name: user.name,
+                classId: user.classId,
+                studentNumber: user.studentNumber || "",
+                score: res.score,
+                timeTaken: res.timeTaken,
+                status: 'finished',
+                finishedAt: window.firebaseModules.serverTimestamp()
+              }, { merge: true });
+        
+              // 保存できたら集計待ちへ
+              setLocalStatus('waiting_rank');
+        
+              // ✅ 先生がすでに closed 済みの場合に備えて、ここで一度だけ確認
+              const sessionRef = window.firebaseModules.doc(db, "test_sessions", session.id);
+              const sSnap = await window.firebaseModules.getDoc(sessionRef);
+              const sData = sSnap.data();
+              if (sData && sData.status === 'closed') {
+                setLocalStatus('rank_ready');
+              }
+        
+            } catch (e) {
+              console.error("save finished failed:", e);
+              openModal("保存エラー", (
+                <div>
+                  <p className="mb-2">結果の保存に失敗しました。</p>
+                  <p className="text-sm text-gray-500 mb-4">{String(e.message || e)}</p>
+                  <button
+                    className="w-full bg-indigo-600 text-white font-bold py-3 rounded-xl hover:bg-indigo-700"
+                    onClick={() => handleFinish(res)}
+                  >
+                    もう一度保存する
+                  </button>
                 </div>
-            );
+              ));
+            }
+          };
+        
+          return (
+            <div className="min-h-screen bg-indigo-50 p-4">
+              {status === 'standby' && !isMakeup && (
+                <div className="flex flex-col items-center justify-center h-[80vh] text-center">
+                  <div className="animate-pulse text-6xl mb-4">📡</div>
+                  <h2 className="text-2xl font-bold text-indigo-900 mb-2">先生の合図を待っています...</h2>
+                  <p className="text-indigo-600">{session.name}</p>
+                  <p className="text-sm text-gray-500 mt-2">参加登録完了。そのままお待ちください。</p>
+                  <button onClick={onBack} className="mt-8 text-gray-400 underline">退出</button>
+                </div>
+              )}
+        
+              {status === 'active' && (
+                <Quiz mode="test" questions={questions} timeLimit={60} onFinish={handleFinish} />
+              )}
+        
+              {status === 'finished' && (
+                <div className="max-w-md mx-auto mt-20 text-center bg-white p-8 rounded-3xl shadow-xl">
+                  {isMakeup ? (
+                    <div>
+                      <h2 className="text-2xl font-bold mb-4">追試終了</h2>
+                      <div className={`text-5xl font-bold mb-4 ${makeupResult?.passed ? 'text-green-600' : 'text-red-500'}`}>
+                        {makeupResult?.score ?? '-'}点
+                      </div>
+                      <div className="text-xl mb-6">
+                        {makeupResult?.passed ? "💮 合格！おめでとうございます！" : "💪 不合格... また明日挑戦してください"}
+                      </div>
+                      <button onClick={onBack} className="mt-8 w-full bg-gray-200 text-gray-700 py-3 rounded-xl hover:bg-gray-300">戻る</button>
+                    </div>
+                  ) : (
+                    <div>
+                      {localStatus === 'saving_result' && (
+                        <div>
+                          <div className="animate-spin text-4xl mb-4">💾</div>
+                          <h2 className="text-xl font-bold mb-4">結果を保存中...</h2>
+                          <p className="text-gray-600">このままお待ちください。</p>
+                        </div>
+                      )}
+        
+                      {localStatus === 'waiting_rank' && (
+                        <div>
+                          <div className="animate-spin text-4xl mb-4">⏳</div>
+                          <h2 className="text-xl font-bold mb-4">集計中...</h2>
+                          <p className="text-gray-600">先生が結果を公開するまで<br />このままお待ちください。</p>
+                        </div>
+                      )}
+        
+                      {localStatus === 'rank_ready' && (
+                        <div>
+                          <h2 className="text-2xl font-bold mb-4">結果発表！</h2>
+                          <button
+                            onClick={() => showRanking && showRanking(session.id, [user.classId])}
+                            className="w-full bg-indigo-600 text-white font-bold py-3 rounded-xl hover:bg-indigo-700 mb-4 shadow-lg"
+                          >
+                            🏆 クラス内ランキングを見る
+                          </button>
+                          <button
+                            onClick={onBack}
+                            className="w-full bg-gray-200 text-gray-700 py-3 rounded-xl hover:bg-gray-300"
+                          >
+                            戻る
+                          </button>
+                        </div>
+                      )}
+        
+                      {(localStatus !== 'saving_result' && localStatus !== 'waiting_rank' && localStatus !== 'rank_ready') && (
+                        <div className="text-gray-500">読み込み中...</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
         };
 
         const TeacherDashboard = ({ user, onBack, openModal, showRanking }) => {
