@@ -497,7 +497,9 @@
                                 needsMakeup = true;
                             } else {
                                 const resData = resSnap.data();
-                                if (resData.score < 8 && !resData.makeupPassed) {
+                                // 修正: 未完了(finishedでない) または スコア不足の場合を追試対象とする
+                                // 以前は (resData.score < 8) のみだったため、joinedのままの生徒(score=undefined)が漏れていた
+                                if ((resData.status !== 'finished' || resData.score < 8) && !resData.makeupPassed) {
                                     needsMakeup = true;
                                     if (resData.makeupHistory && resData.makeupHistory.length > 0) {
                                          const last = resData.makeupHistory[resData.makeupHistory.length - 1];
@@ -734,18 +736,18 @@
                                 </div>
                                 <div className="flex gap-2 items-center">
                                      {!isGuest && (
-                                         <button onClick={() => refreshData(user.uid, userData.role, userData.classId)} className="text-gray-400 hover:text-green-600 p-2" title="データを更新">
-                                            🔄
-                                         </button>
+                                     <button onClick={() => refreshData(user.uid, userData.role, userData.classId)} className="text-gray-400 hover:text-green-600 p-2" title="データを更新">
+                                         🔄
+                                     </button>
                                      )}
                                      {userData.role === 'teacher' && (
                                         <button onClick={() => setView("teacher")} className="bg-purple-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-purple-700 transition">
                                             教員メニュー
                                         </button>
-                                    )}
-                                    <button onClick={handleLogout} className="text-gray-500 hover:text-red-500 px-3 py-2">
-                                        {isGuest ? '終了' : 'ログアウト'}
-                                    </button>
+                                     )}
+                                     <button onClick={handleLogout} className="text-gray-500 hover:text-red-500 px-3 py-2">
+                                         {isGuest ? '終了' : 'ログアウト'}
+                                     </button>
                                 </div>
                             </header>
 
@@ -1251,7 +1253,7 @@
           const [makeupResult, setMakeupResult] = useState(null);
         
           // ✅ 追加：本試験の点数表示用
-          const [testResult, setTestResult] = useState(null);           // { score, timeTaken }
+          const [testResult, setTestResult] = useState(null);            // { score, timeTaken }
         
           // ✅ 追加：stale 対策（snapshot 内で最新状態を参照する）
           const localStatusRef = useRef(localStatus);
